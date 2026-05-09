@@ -92,6 +92,15 @@ const game = {
     ty: KEEPER_HOME.y,
     lean: 0,
   },
+  pendingOpponentShot: null,
+  opponentHint: {
+    active: false,
+    x: 0,
+    y: 0,
+    elapsed: 0,
+    duration: 1.2,
+    alpha: 0,
+  },
   resultTimer: 0,
   mouse: { x: 0, y: 0 },
 };
@@ -227,6 +236,7 @@ function resetGame() {
   game.playerHistory = [];
   game.opponentHistory = [];
   resetShotControls();
+  resetOpponentHint();
   game.shot = null;
   game.keeper = { x: KEEPER_HOME.x, y: KEEPER_HOME.y, tx: KEEPER_HOME.x, ty: KEEPER_HOME.y, lean: 0 };
   game.resultTimer = 0;
@@ -246,6 +256,18 @@ function resetShotControls() {
     power: game.markers.power.t,
   };
   game.lockedShot = { direction: 0.5, height: 0.5, power: 0.5 };
+}
+
+function resetOpponentHint() {
+  game.pendingOpponentShot = null;
+  game.opponentHint = {
+    active: false,
+    x: 0,
+    y: 0,
+    elapsed: 0,
+    duration: 1.2,
+    alpha: 0,
+  };
 }
 
 function startGame() {
@@ -292,6 +314,8 @@ function loop(now) {
 function update(dt) {
   if (game.mode === 'playerAim') {
     updateControlMarkers(dt);
+  } else if (game.mode === 'goalkeeperPick') {
+    updateOpponentHint(dt);
   } else if (game.mode === 'playerShot' || game.mode === 'opponentShot') {
     updateShot(dt);
   } else if (game.mode === 'resultPause') {
@@ -303,6 +327,25 @@ function update(dt) {
   }
 
   updateKeeper(dt);
+}
+
+function updateOpponentHint(dt) {
+  const hint = game.opponentHint;
+  if (!hint.active) return;
+
+  hint.elapsed += dt;
+  const remaining = Math.max(0, hint.duration - hint.elapsed);
+  const fadeWindow = Math.min(0.28, hint.duration * 0.45);
+  hint.alpha = clamp(remaining / fadeWindow, 0, 1);
+
+  if (hint.elapsed >= hint.duration) {
+    hint.active = false;
+    hint.alpha = 0;
+    if (game.mode === 'goalkeeperPick') {
+      game.phaseMessage = 'Choose your save spot!';
+      canvasHint.textContent = 'Click inside the goal to choose your goalkeeper dive spot.';
+    }
+  }
 }
 
 function currentDifficulty() {
@@ -617,8 +660,9 @@ function startPlayerAim() {
 
 function startGoalkeeperPick() {
   game.mode = 'goalkeeperPick';
-  game.phaseMessage = 'Defend! Click inside the goal.';
-  canvasHint.textContent = 'Click inside the goal to choose your goalkeeper dive spot.';
+  prepareOpponentShotBeforeKeeperClick();
+  game.phaseMessage = 'Watch the glove hint, then choose your save spot!';
+  canvasHint.textContent = 'Watch the glove hint, then click inside the goal to dive.';
 }
 
 function lockActiveControl() {
@@ -674,6 +718,30 @@ function chooseKeeperTargetAgainstPlayer(shot) {
 }
 
 function createOpponentShot(clickPoint) {
+  const shot = game.pendingOpponentShot || prepareOpponentShotBeforeKeeperClick();
+  game.pendingOpponentShot = null;
+  game.opponentHint.active = false;
+  game.opponentHint.alpha = 0;
+
+  shot.keeperTarget = {
+    x: clamp(clickPoint.x, GOAL.x + 35, GOAL.x + GOAL.w - 35),
+    y: clamp(clickPoint.y, GOAL.y + 38, GOAL.y + GOAL.h - 38),
+  };
+  shot.time = 0;
+  shot.x = shot.start.x;
+  shot.y = shot.start.y;
+  shot.rotation = 0;
+  shot.scale = 1;
+  shot.result = null;
+  shot.rebound = null;
+  game.shot = shot;
+  game.mode = 'opponentShot';
+  game.phaseMessage = 'Opponent shot!';
+  canvasHint.textContent = 'Watch the shot result.';
+  playTone('click');
+}
+
+function prepareOpponentShotBeforeKeeperClick() {
   const shotValues = generateOpponentShotValues();
   const shot = buildShotFromValues({
     shooter: 'opponent',
@@ -681,15 +749,29 @@ function createOpponentShot(clickPoint) {
     height: shotValues.height,
     power: shotValues.power,
   });
-  shot.keeperTarget = {
-    x: clamp(clickPoint.x, GOAL.x + 35, GOAL.x + GOAL.w - 35),
-    y: clamp(clickPoint.y, GOAL.y + 38, GOAL.y + GOAL.h - 38),
+
+  game.pendingOpponentShot = shot;
+  startOpponentShotHint(shot.target);
+  return shot;
+}
+
+function getOpponentHintDuration() {
+  if (game.suddenDeath) return 0.38;
+
+  const durations = [1.2, 1.0, 0.85, 0.7, 0.55];
+  const attemptIndex = Math.min(game.opponentHistory.length, durations.length - 1);
+  return Math.max(0.33, durations[attemptIndex]);
+}
+
+function startOpponentShotHint(target) {
+  game.opponentHint = {
+    active: true,
+    x: clamp(target.x, GOAL.x + 34, GOAL.x + GOAL.w - 34),
+    y: clamp(target.y, GOAL.y + 34, GOAL.y + GOAL.h - 34),
+    elapsed: 0,
+    duration: getOpponentHintDuration(),
+    alpha: 1,
   };
-  game.shot = shot;
-  game.mode = 'opponentShot';
-  game.phaseMessage = 'Opponent shot!';
-  canvasHint.textContent = 'Watch the shot result.';
-  playTone('click');
 }
 
 function generateOpponentShotValues() {
@@ -852,6 +934,7 @@ function draw() {
 
   if (game.mode === 'goalkeeperPick') {
     drawGoalClickOverlay();
+    drawOpponentShotHint();
   }
 
   drawControls();
@@ -1979,7 +2062,72 @@ function drawGoalClickOverlay() {
   ctx.fillStyle = '#fff';
   ctx.font = '900 22px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText('CLICK A DIVE SPOT', GOAL.x + GOAL.w / 2, GOAL.y - 18);
+  ctx.fillText(game.opponentHint.active ? 'WATCH THE GLOVE HINT' : 'CLICK A DIVE SPOT', GOAL.x + GOAL.w / 2, GOAL.y - 18);
+  ctx.restore();
+}
+
+function drawOpponentShotHint() {
+  const hint = game.opponentHint;
+  if (!hint.active || hint.alpha <= 0) return;
+
+  const pulse = 1 + Math.sin(hint.elapsed * 18) * 0.08;
+  const intro = clamp(hint.elapsed / 0.14, 0, 1);
+  const scale = pulse * lerp(0.78, 1, easeOutCubic(intro));
+  const alpha = hint.alpha;
+
+  ctx.save();
+  ctx.translate(hint.x, hint.y);
+  ctx.scale(scale, scale);
+  ctx.globalAlpha = alpha;
+
+  const glow = ctx.createRadialGradient(0, 0, 8, 0, 0, 48);
+  glow.addColorStop(0, 'rgba(255,230,90,.48)');
+  glow.addColorStop(0.62, 'rgba(255,230,90,.16)');
+  glow.addColorStop(1, 'rgba(255,230,90,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, 50, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255,222,62,.88)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(0, 0, 30, 0, Math.PI * 2);
+  ctx.stroke();
+
+  drawHintGlove(-12, 1, -0.24);
+  drawHintGlove(12, 1, 0.24);
+
+  ctx.fillStyle = 'rgba(255,255,255,.92)';
+  ctx.beginPath();
+  ctx.arc(0, 0, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawHintGlove(x, y, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+
+  ctx.fillStyle = '#f8fbff';
+  ctx.strokeStyle = 'rgba(16,40,68,.55)';
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.ellipse(0, 5, 9, 13, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  for (let i = -2; i <= 2; i += 1) {
+    const fx = i * 3.2;
+    roundRect(ctx, fx - 1.4, -11, 2.8, 12, 1.4, true, true);
+  }
+
+  ctx.fillStyle = '#ffd23e';
+  roundRect(ctx, -8, 12, 16, 6, 3, true, false);
+
   ctx.restore();
 }
 
