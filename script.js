@@ -295,6 +295,7 @@ function update(dt) {
   } else if (game.mode === 'playerShot' || game.mode === 'opponentShot') {
     updateShot(dt);
   } else if (game.mode === 'resultPause') {
+    updateBallRebound(dt);
     game.resultTimer -= dt;
     if (game.resultTimer <= 0) {
       advanceAfterResult();
@@ -389,12 +390,88 @@ function updateShot(dt) {
   }
 }
 
+
+function updateBallRebound(dt) {
+  const shot = game.shot;
+  if (!shot || !shot.rebound) return;
+
+  const r = shot.rebound;
+  r.time += dt;
+
+  // Keep a short motion trail so a fast save looks like a real deflection.
+  r.trail.push({ x: shot.x, y: shot.y, scale: shot.scale, alpha: 0.34 });
+  if (r.trail.length > 9) r.trail.shift();
+  r.trail.forEach((point) => {
+    point.alpha *= Math.pow(0.25, dt);
+  });
+
+  // Real rebound physics: velocity + gravity + bounce + friction.
+  // y grows toward the player/camera; z is the ball height above the pitch.
+  r.vz -= r.gravity * dt;
+  r.x += r.vx * dt;
+  r.y += r.vy * dt;
+  r.z += r.vz * dt;
+
+  // Wall/post-ish side limits so the ball can glance away without leaving the screen instantly.
+  if (r.x < 42) {
+    r.x = 42;
+    r.vx = Math.abs(r.vx) * 0.58;
+  } else if (r.x > W - 42) {
+    r.x = W - 42;
+    r.vx = -Math.abs(r.vx) * 0.58;
+  }
+
+  // When the ball hits the ground, it bounces once or twice and loses speed.
+  if (r.z <= 0) {
+    r.z = 0;
+    if (Math.abs(r.vz) > 86 && r.bounces < 2) {
+      r.vz = -r.vz * r.bounceDamping;
+      r.vx *= 0.74;
+      r.vy *= 0.70;
+      r.bounces += 1;
+      r.squash = 1;
+    } else {
+      r.vz = 0;
+      r.onGround = true;
+    }
+  }
+
+  const friction = r.onGround ? 0.055 : 0.42;
+  r.vx *= Math.pow(friction, dt);
+  r.vy *= Math.pow(friction, dt);
+  r.spin *= Math.pow(r.onGround ? 0.20 : 0.62, dt);
+  r.squash *= Math.pow(0.03, dt);
+
+  // Perspective: as the ball comes back toward the penalty spot, it becomes larger.
+  const perspective = clamp((r.y - GOAL.y) / (BALL_START.y - GOAL.y), 0, 1);
+  shot.x = r.x;
+  shot.y = r.y - r.z;
+  shot.scale = lerp(0.58, 1.36, perspective) * (1 + Math.min(0.08, r.z / 950));
+  shot.rotation += dt * r.spin;
+
+  // End the rebound when the ball has visibly slowed down or after a safe timeout.
+  const speed = Math.hypot(r.vx, r.vy) + Math.abs(r.vz) * 0.45;
+  if ((r.time > 0.75 && speed < 70 && r.onGround) || r.time > r.maxTime || r.y > H - 62) {
+    r.done = true;
+    r.vx = 0;
+    r.vy = 0;
+    r.vz = 0;
+    r.spin = 0;
+    r.z = 0;
+    shot.y = r.y;
+  }
+}
+
 function finishShot() {
   const shot = game.shot;
   if (!shot) return;
 
   const result = evaluateShot(shot);
   shot.result = result;
+
+  if (result.saved) {
+    initializeSavedRebound(shot);
+  }
 
   if (shot.shooter === 'player') {
     game.playerHistory.push(result.goal);
@@ -418,7 +495,60 @@ function finishShot() {
 
   game.mode = 'resultPause';
   game.phaseMessage = result.label;
-  game.resultTimer = 1.45;
+  // Saves need a little more time so the rebound can be seen clearly.
+  game.resultTimer = result.saved ? 2.05 : 1.45;
+}
+
+
+function initializeSavedRebound(shot) {
+  const savePoint = {
+    x: shot.x,
+    y: shot.y,
+  };
+
+  const keeperSide = clamp((shot.keeperTarget.x - KEEPER_HOME.x) / 175, -1, 1);
+  const shotSide = clamp((shot.target.x - (GOAL.x + GOAL.w / 2)) / (GOAL.w / 2), -1, 1);
+  const heightFactor = clamp((GOAL.y + GOAL.h - shot.target.y) / GOAL.h, 0, 1);
+  const powerFactor = clamp(shot.power, 0, 1);
+  const panenkaFactor = shot.isPanenka ? 1 : 0;
+
+  // Deflection direction:
+  // - diving saves push the ball to the same side as the dive
+  // - central saves send it back toward the penalty spot with a slight random side
+  const side = Math.abs(keeperSide) > 0.20
+    ? keeperSide
+    : (Math.abs(shotSide) > 0.12 ? shotSide * 0.65 : (Math.random() < 0.5 ? -0.55 : 0.55));
+
+  const powerKick = lerp(0.70, 1.35, powerFactor);
+  const chipFloat = heightFactor * 0.45 + panenkaFactor * 0.32;
+
+  const vx = side * randomRange(210, 360) * powerKick;
+  const vy = randomRange(245, 430) * (0.82 + powerFactor * 0.36 - panenkaFactor * 0.18);
+  const vz = randomRange(210, 360) * (0.70 + chipFloat) + (powerFactor > 0.72 ? 65 : 0);
+
+  shot.rebound = {
+    time: 0,
+    maxTime: 1.85,
+    x: savePoint.x,
+    y: savePoint.y,
+    z: Math.max(8, heightFactor * 42),
+    vx,
+    vy,
+    vz,
+    gravity: 780,
+    bounceDamping: lerp(0.34, 0.48, powerFactor),
+    bounces: 0,
+    onGround: false,
+    squash: 0,
+    spin: (side >= 0 ? 1 : -1) * randomRange(18, 30) * (0.85 + powerFactor * 0.45),
+    trail: [],
+    done: false,
+  };
+
+  // Start the visible rebound from the actual save contact point.
+  shot.x = savePoint.x;
+  shot.y = savePoint.y;
+  shot.scale = Math.max(0.58, shot.scale);
 }
 
 function evaluateShot(shot) {
@@ -712,6 +842,7 @@ function draw() {
   drawScoreboard();
   drawPlayer();
   drawGoalkeeper();
+  drawReboundTrail();
   if (game.shot) {
     drawBall(game.shot.x, game.shot.y, 18 * game.shot.scale, game.shot.rotation);
   } else {
@@ -1155,10 +1286,19 @@ function drawCanvasCrest(team, x, y, radius) {
 }
 
 function drawPlayer() {
-  const team = selectedTeam;
-  const activeShot = game.shot && game.shot.shooter === 'player' ? game.shot : null;
+  const activeShot = game.shot && (game.mode === 'playerShot' || game.mode === 'opponentShot' || game.mode === 'resultPause')
+    ? game.shot
+    : null;
 
-  if (activeShot && (game.mode === 'playerShot' || game.mode === 'resultPause')) {
+  // Show the correct shooter kit:
+  // - our selected team when we shoot
+  // - opponent team when the opponent shoots or while we are choosing a save spot
+  const isOpponentShooter = game.mode === 'goalkeeperPick' || activeShot?.shooter === 'opponent';
+  const team = isOpponentShooter ? opponentTeam : selectedTeam;
+
+  if (!team) return;
+
+  if (activeShot) {
     drawKickingFootballer(PLAYER_POS.x, PLAYER_POS.y, team.primary, team.secondary, 0.88, activeShot);
   } else {
     drawFootballer(PLAYER_POS.x, PLAYER_POS.y, team.primary, team.secondary, 0.88);
@@ -1741,6 +1881,23 @@ function drawGoalkeeperFigure(x, y, color, lean, scale = 1, diveAmount = 0, dive
 
   ctx.restore();
 }
+function drawReboundTrail() {
+  const shot = game.shot;
+  if (!shot || !shot.rebound || !shot.rebound.trail) return;
+
+  ctx.save();
+  shot.rebound.trail.forEach((point, index) => {
+    if (point.alpha < 0.015) return;
+    const radius = 18 * point.scale * (0.62 + index / 18);
+    ctx.globalAlpha = point.alpha;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
 function drawBall(x, y, radius, rotation) {
   ctx.save();
   ctx.translate(x, y);
