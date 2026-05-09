@@ -34,6 +34,7 @@ const CONTROL_BARS = {
   height: { x: 461, y: 636, w: 286, h: 38, label: 'HEIGHT', left: 'LOW', right: 'HIGH' },
   power: { x: 778, y: 636, w: 286, h: 38, label: 'POWER', left: 'SLOW', right: 'FAST' },
 };
+const CONTROL_ORDER = ['direction', 'height', 'power'];
 
 const screens = {
   menu: document.getElementById('menuScreen'),
@@ -225,18 +226,26 @@ function resetGame() {
   game.opponentPoints = 0;
   game.playerHistory = [];
   game.opponentHistory = [];
-  game.activeControl = 'direction';
-  game.controlValue = { direction: 0.5, height: 0.5, power: 0.5 };
-  game.lockedShot = { direction: 0.5, height: 0.5, power: 0.5 };
-  game.markers = {
-    direction: { t: Math.random(), dir: 1 },
-    height: { t: Math.random(), dir: 1 },
-    power: { t: Math.random(), dir: 1 },
-  };
+  resetShotControls();
   game.shot = null;
   game.keeper = { x: KEEPER_HOME.x, y: KEEPER_HOME.y, tx: KEEPER_HOME.x, ty: KEEPER_HOME.y, lean: 0 };
   game.resultTimer = 0;
   canvasHint.textContent = 'Click the active control or press Space.';
+}
+
+function resetShotControls() {
+  game.activeControl = 'direction';
+  game.markers = {
+    direction: { t: Math.random(), dir: Math.random() < 0.5 ? -1 : 1 },
+    height: { t: Math.random(), dir: Math.random() < 0.5 ? -1 : 1 },
+    power: { t: Math.random(), dir: Math.random() < 0.5 ? -1 : 1 },
+  };
+  game.controlValue = {
+    direction: game.markers.direction.t,
+    height: game.markers.height.t,
+    power: game.markers.power.t,
+  };
+  game.lockedShot = { direction: 0.5, height: 0.5, power: 0.5 };
 }
 
 function startGame() {
@@ -302,17 +311,18 @@ function currentDifficulty() {
 
 function updateControlMarkers(dt) {
   const speed = currentDifficulty();
-  Object.entries(game.markers).forEach(([key, marker]) => {
-    marker.t += marker.dir * speed * dt;
-    if (marker.t > 1) {
-      marker.t = 1;
-      marker.dir = -1;
-    } else if (marker.t < 0) {
-      marker.t = 0;
-      marker.dir = 1;
-    }
-    game.controlValue[key] = marker.t;
-  });
+  const marker = game.markers[game.activeControl];
+  if (!marker) return;
+
+  marker.t += marker.dir * speed * dt;
+  if (marker.t > 1) {
+    marker.t = 1;
+    marker.dir = -1;
+  } else if (marker.t < 0) {
+    marker.t = 0;
+    marker.dir = 1;
+  }
+  game.controlValue[game.activeControl] = marker.t;
 }
 
 function updateKeeper(dt) {
@@ -429,12 +439,9 @@ function resetKeeper() {
 
 function startPlayerAim() {
   game.mode = 'playerAim';
-  game.activeControl = 'direction';
+  resetShotControls();
   game.phaseMessage = game.suddenDeath ? 'Sudden Death: select direction' : 'Select shot direction';
   canvasHint.textContent = 'Click the Direction bar or press Space.';
-  game.markers.direction.t = Math.random();
-  game.markers.height.t = Math.random();
-  game.markers.power.t = Math.random();
 }
 
 function startGoalkeeperPick() {
@@ -448,6 +455,7 @@ function lockActiveControl() {
 
   const key = game.activeControl;
   game.lockedShot[key] = game.controlValue[key];
+  game.controlValue[key] = game.lockedShot[key];
   playTone('click');
 
   if (key === 'direction') {
@@ -473,6 +481,7 @@ function createPlayerShot() {
 
   shot.keeperTarget = chooseKeeperTargetAgainstPlayer(shot);
   game.shot = shot;
+  game.activeControl = null;
   game.mode = 'playerShot';
   game.phaseMessage = 'Shot!';
   canvasHint.textContent = 'Watch the shot result.';
@@ -1025,7 +1034,7 @@ function drawControls() {
 
 function drawControlBar(key, bar) {
   const active = game.mode === 'playerAim' && game.activeControl === key;
-  const locked = game.mode === 'playerAim' && controlIsLocked(key);
+  const locked = controlIsLocked(key);
 
   ctx.save();
   ctx.fillStyle = active ? 'rgba(255, 210, 31, .22)' : locked ? 'rgba(22, 226, 118, .20)' : 'rgba(255,255,255,.16)';
@@ -1047,7 +1056,7 @@ function drawControlBar(key, bar) {
   ctx.textAlign = 'right';
   ctx.fillText(bar.right, bar.x + bar.w - 10, bar.y + 25);
 
-  const t = game.mode === 'playerAim' ? game.controlValue[key] : game.lockedShot[key];
+  const t = locked ? game.lockedShot[key] : game.controlValue[key];
   const mx = bar.x + 22 + t * (bar.w - 44);
   const my = bar.y + bar.h / 2;
   ctx.fillStyle = active ? '#ffd21f' : locked ? '#16e276' : '#d7e7ff';
@@ -1067,15 +1076,18 @@ function drawControlBar(key, bar) {
     ctx.font = '900 13px system-ui';
     ctx.fillStyle = '#ffd21f';
     ctx.fillText('ACTIVE', bar.x + bar.w / 2, bar.y - 8);
+  } else if (locked) {
+    ctx.font = '900 13px system-ui';
+    ctx.fillStyle = '#16e276';
+    ctx.fillText('LOCKED', bar.x + bar.w / 2, bar.y - 8);
   }
   ctx.restore();
 }
 
 function controlIsLocked(key) {
-  if (game.activeControl === 'direction') return false;
-  if (game.activeControl === 'height') return key === 'direction';
-  if (game.activeControl === 'power') return key === 'direction' || key === 'height';
-  return true;
+  const activeIndex = CONTROL_ORDER.indexOf(game.activeControl);
+  if (activeIndex === -1) return true;
+  return CONTROL_ORDER.indexOf(key) < activeIndex;
 }
 
 function canvasPoint(event) {
