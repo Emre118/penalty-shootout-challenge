@@ -101,6 +101,8 @@ const game = {
     duration: 1.2,
     alpha: 0,
   },
+  frameImpact: null,
+  netRipple: null,
   resultTimer: 0,
   mouse: { x: 0, y: 0 },
 };
@@ -237,6 +239,8 @@ function resetGame() {
   game.opponentHistory = [];
   resetShotControls();
   resetOpponentHint();
+  game.frameImpact = null;
+  game.netRipple = null;
   game.shot = null;
   game.keeper = { x: KEEPER_HOME.x, y: KEEPER_HOME.y, tx: KEEPER_HOME.x, ty: KEEPER_HOME.y, lean: 0 };
   game.resultTimer = 0;
@@ -312,6 +316,8 @@ function loop(now) {
 }
 
 function update(dt) {
+  updateGoalEffects(dt);
+
   if (game.mode === 'playerAim') {
     updateControlMarkers(dt);
   } else if (game.mode === 'goalkeeperPick') {
@@ -327,6 +333,22 @@ function update(dt) {
   }
 
   updateKeeper(dt);
+}
+
+function updateGoalEffects(dt) {
+  if (game.frameImpact) {
+    game.frameImpact.time += dt;
+    if (game.frameImpact.time >= game.frameImpact.duration) {
+      game.frameImpact = null;
+    }
+  }
+
+  if (game.netRipple) {
+    game.netRipple.time += dt;
+    if (game.netRipple.time >= game.netRipple.duration) {
+      game.netRipple = null;
+    }
+  }
 }
 
 function updateOpponentHint(dt) {
@@ -399,6 +421,9 @@ function updateShot(dt) {
     game.shot.x = game.shot.start.x;
     game.shot.y = game.shot.start.y;
     game.shot.scale = 1.55;
+    game.shot.shadowX = game.shot.start.x;
+    game.shot.shadowY = game.shot.start.y + 9;
+    game.shot.shadowScale = 1.08;
   } else {
     if (game.shot.shooter === 'player' && game.phaseMessage === 'Run up!') {
       game.phaseMessage = 'Shot!';
@@ -419,6 +444,9 @@ function updateShot(dt) {
     game.shot.x = x;
     game.shot.y = lineY - arc + lateDrop;
     game.shot.scale = lerp(1.55, game.shot.endScale || 0.62, eased);
+    game.shot.shadowX = x;
+    game.shot.shadowY = lineY + lateDrop + Math.min(34, arc * 0.32);
+    game.shot.shadowScale = game.shot.scale * lerp(1, 0.55, clamp(arc / 150, 0, 1));
     game.shot.rotation += dt * (5 + game.shot.power * 15);
   }
 
@@ -490,6 +518,9 @@ function updateBallRebound(dt) {
   shot.x = r.x;
   shot.y = r.y - r.z;
   shot.scale = lerp(0.58, 1.36, perspective) * (1 + Math.min(0.08, r.z / 950));
+  shot.shadowX = r.x;
+  shot.shadowY = r.y + 8;
+  shot.shadowScale = shot.scale * lerp(1, 0.58, clamp(r.z / 170, 0, 1));
   shot.rotation += dt * r.spin;
 
   // End the rebound when the ball has visibly slowed down or after a safe timeout.
@@ -514,6 +545,10 @@ function finishShot() {
 
   if (result.saved) {
     initializeSavedRebound(shot);
+  } else if (result.frameHit) {
+    initializeFrameRebound(shot, result);
+  } else if (result.goal) {
+    initializeNetRipple(shot);
   }
 
   if (shot.shooter === 'player') {
@@ -538,15 +573,15 @@ function finishShot() {
 
   game.mode = 'resultPause';
   game.phaseMessage = result.label;
-  // Saves need a little more time so the rebound can be seen clearly.
-  game.resultTimer = result.saved ? 2.05 : 1.45;
+  // Saves and frame hits need a little more time so the rebound can be seen clearly.
+  game.resultTimer = (result.saved || result.frameHit) ? 2.05 : 1.45;
 }
 
 
 function initializeSavedRebound(shot) {
   const savePoint = {
-    x: shot.x,
-    y: shot.y,
+    x: lerp(shot.x, shot.keeperTarget.x, 0.58),
+    y: lerp(shot.y, shot.keeperTarget.y, 0.58),
   };
 
   const keeperSide = clamp((shot.keeperTarget.x - KEEPER_HOME.x) / 175, -1, 1);
@@ -594,7 +629,68 @@ function initializeSavedRebound(shot) {
   shot.scale = Math.max(0.58, shot.scale);
 }
 
+function initializeFrameRebound(shot, result) {
+  const point = result.impact || shot.target;
+  const isCrossbar = result.type === 'crossbar';
+  const side = isCrossbar
+    ? clamp((point.x - (GOAL.x + GOAL.w / 2)) / (GOAL.w / 2), -0.75, 0.75)
+    : (result.side === 'left' ? -1 : 1);
+  const powerFactor = clamp(shot.power, 0, 1);
+
+  game.frameImpact = {
+    x: point.x,
+    y: point.y,
+    time: 0,
+    duration: 0.45,
+    type: result.type,
+  };
+
+  shot.rebound = {
+    time: 0,
+    maxTime: 1.65,
+    x: point.x,
+    y: point.y,
+    z: isCrossbar ? 18 : 8,
+    vx: (isCrossbar ? side || (Math.random() < 0.5 ? -0.45 : 0.45) : side) * randomRange(230, 390) * (0.85 + powerFactor * 0.45),
+    vy: isCrossbar ? randomRange(230, 360) : randomRange(260, 430),
+    vz: isCrossbar ? randomRange(260, 390) : randomRange(120, 240),
+    gravity: 820,
+    bounceDamping: 0.38,
+    bounces: 0,
+    onGround: false,
+    squash: 0,
+    spin: side * randomRange(24, 36),
+    trail: [],
+    done: false,
+  };
+
+  shot.x = point.x;
+  shot.y = point.y;
+  shot.scale = Math.max(0.58, shot.scale);
+}
+
+function initializeNetRipple(shot) {
+  game.netRipple = {
+    x: clamp(shot.target.x, GOAL.x + 28, GOAL.x + GOAL.w - 28),
+    y: clamp(shot.target.y, GOAL.y + 28, GOAL.y + GOAL.h - 28),
+    time: 0,
+    duration: 0.65,
+  };
+}
+
 function evaluateShot(shot) {
+  if (shot.frameHit) {
+    return {
+      goal: false,
+      saved: false,
+      frameHit: true,
+      type: shot.frameHit.type,
+      side: shot.frameHit.side,
+      impact: shot.frameHit.impact,
+      label: shot.frameHit.type === 'crossbar' ? 'CROSSBAR!' : 'POST!',
+    };
+  }
+
   if (!shot.inGoal) {
     return { goal: false, saved: false, label: 'MISSED!' };
   }
@@ -807,7 +903,7 @@ function buildShotFromValues({ shooter, direction, height, power }) {
   const postInside = GOAL.w / 2 - 24;
   const wideRisk = Math.max(0, edgeAmount - 0.82) / 0.18;
   const highPowerWildness = Math.max(0, safePower - 0.72) * 125;
-  const targetX = centerX + dirAmount * (postInside + wideRisk * (22 + highPowerWildness));
+  let targetX = centerX + dirAmount * (postInside + wideRisk * (22 + highPowerWildness));
 
   // Height controls the vertical aim. The important part:
   // high + slow is NOT automatically over the bar. It becomes a chip/Panenka that drops.
@@ -850,7 +946,32 @@ function buildShotFromValues({ shooter, direction, height, power }) {
   // This hitbox matches the visible goal mouth. If the final ball position is inside,
   // it is a goal/save situation; if it finishes outside, it is a real miss.
   const tolerance = 4;
+  let frameHit = null;
+  const postCandidate =
+    edgeAmount > 0.90 &&
+    safePower > 0.52 &&
+    safePower < 0.94 &&
+    safeHeight > 0.16 &&
+    safeHeight < 0.86;
+  const crossbarCandidate =
+    safeHeight > 0.88 &&
+    safePower > 0.56 &&
+    safePower < 0.96 &&
+    edgeAmount < 0.82;
+
+  if (postCandidate) {
+    const side = dirAmount < 0 ? 'left' : 'right';
+    targetX = side === 'left' ? GOAL.x : GOAL.x + GOAL.w;
+    targetY = clamp(targetY, GOAL.y + 42, GOAL.y + GOAL.h - 34);
+    frameHit = { type: 'post', side, impact: { x: targetX, y: targetY } };
+  } else if (crossbarCandidate) {
+    targetX = clamp(targetX, GOAL.x + 54, GOAL.x + GOAL.w - 54);
+    targetY = GOAL.y;
+    frameHit = { type: 'crossbar', side: 'top', impact: { x: targetX, y: targetY } };
+  }
+
   const inGoal =
+    !frameHit &&
     targetX >= GOAL.x + tolerance &&
     targetX <= GOAL.x + GOAL.w - tolerance &&
     targetY >= GOAL.y + tolerance &&
@@ -863,6 +984,7 @@ function buildShotFromValues({ shooter, direction, height, power }) {
     y: BALL_START.y,
     target: { x: targetX, y: targetY },
     inGoal,
+    frameHit,
     direction: safeDirection,
     height: safeHeight,
     power: safePower,
@@ -926,10 +1048,13 @@ function draw() {
   drawGoalkeeper();
   drawReboundTrail();
   if (game.shot) {
+    drawBallShadow(game.shot);
     drawBall(game.shot.x, game.shot.y, 18 * game.shot.scale, game.shot.rotation);
   } else {
+    drawBallShadow({ shadowX: BALL_START.x, shadowY: BALL_START.y + 9, shadowScale: 1.02 });
     drawBall(BALL_START.x, BALL_START.y, 20, 0);
   }
+  drawGoalEffects();
   drawPhaseMessage();
 
   if (game.mode === 'goalkeeperPick') {
@@ -1981,6 +2106,83 @@ function drawReboundTrail() {
   ctx.restore();
 }
 
+function drawBallShadow(shot) {
+  const x = shot.shadowX ?? shot.x;
+  const y = shot.shadowY ?? shot.y + 9;
+  const scale = shot.shadowScale ?? shot.scale ?? 1;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.24)';
+  ctx.beginPath();
+  ctx.ellipse(x, y, 18 * scale, 6 * scale, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawGoalEffects() {
+  drawNetRipple();
+  drawFrameImpactEffect();
+}
+
+function drawNetRipple() {
+  const ripple = game.netRipple;
+  if (!ripple) return;
+
+  const t = clamp(ripple.time / ripple.duration, 0, 1);
+  const alpha = (1 - t) * 0.48;
+  const wave = Math.sin(t * Math.PI);
+  const radiusX = lerp(18, 70, t);
+  const radiusY = lerp(10, 34, t);
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(ripple.x, ripple.y, radiusX, radiusY + wave * 8, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = `rgba(255,210,31,${alpha * 0.55})`;
+  ctx.lineWidth = 1.5;
+  for (let i = -2; i <= 2; i += 1) {
+    ctx.beginPath();
+    ctx.moveTo(ripple.x - radiusX * 0.65, ripple.y + i * 9 + wave * 5);
+    ctx.quadraticCurveTo(ripple.x, ripple.y + i * 9 - wave * 10, ripple.x + radiusX * 0.65, ripple.y + i * 9 + wave * 5);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFrameImpactEffect() {
+  const impact = game.frameImpact;
+  if (!impact) return;
+
+  const t = clamp(impact.time / impact.duration, 0, 1);
+  const alpha = 1 - t;
+  const radius = lerp(8, 42, easeOutCubic(t));
+
+  ctx.save();
+  ctx.translate(impact.x, impact.y);
+  ctx.strokeStyle = `rgba(255,230,90,${alpha})`;
+  ctx.lineWidth = lerp(4, 1, t);
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = `rgba(255,255,255,${alpha * 0.86})`;
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 8; i += 1) {
+    const a = (i / 8) * Math.PI * 2;
+    const inner = 8 + t * 9;
+    const outer = 18 + t * 24;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+    ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawBall(x, y, radius, rotation) {
   ctx.save();
   ctx.translate(x, y);
@@ -2021,9 +2223,9 @@ function drawPentagon(x, y, r) {
 function drawPhaseMessage() {
   ctx.save();
   ctx.textAlign = 'center';
-  const isResult = ['GOAL!', 'SAVED!', 'MISSED!'].includes(game.phaseMessage);
+  const isResult = ['GOAL!', 'SAVED!', 'MISSED!', 'POST!', 'CROSSBAR!'].includes(game.phaseMessage);
   ctx.font = isResult ? '950 62px system-ui' : '900 28px system-ui';
-  ctx.fillStyle = isResult ? (game.phaseMessage === 'GOAL!' ? '#1df26b' : '#ffd21f') : '#ffffff';
+  ctx.fillStyle = isResult ? (game.phaseMessage === 'GOAL!' ? '#1df26b' : game.phaseMessage === 'SAVED!' ? '#ffd21f' : '#ffdf5a') : '#ffffff';
   ctx.strokeStyle = 'rgba(0,0,0,.55)';
   ctx.lineWidth = isResult ? 8 : 5;
   const text = game.phaseMessage || '';
