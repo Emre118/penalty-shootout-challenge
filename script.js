@@ -619,7 +619,7 @@ function draw() {
   if (game.shot) {
     drawBall(game.shot.x, game.shot.y, 18 * game.shot.scale, game.shot.rotation);
   } else {
-    drawBall(BALL_START.x, BALL_START.y, 22, 0);
+    drawBall(BALL_START.x, BALL_START.y, 20, 0);
   }
   drawPhaseMessage();
 
@@ -631,22 +631,60 @@ function draw() {
 }
 
 function drawStadium() {
-  const sky = ctx.createLinearGradient(0, 0, 0, 210);
-  sky.addColorStop(0, '#2d8fe2');
-  sky.addColorStop(1, '#0e5aa4');
+  const sky = ctx.createLinearGradient(0, 0, 0, 260);
+  sky.addColorStop(0, '#38a4f0');
+  sky.addColorStop(0.62, '#0e67b6');
+  sky.addColorStop(1, '#064478');
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, 260);
 
-  ctx.fillStyle = '#0a1b2d';
-  ctx.fillRect(0, 42, W, 155);
+  const glow = ctx.createRadialGradient(W / 2, 70, 40, W / 2, 95, 520);
+  glow.addColorStop(0, 'rgba(255,255,255,.32)');
+  glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, 220);
+
+  ctx.fillStyle = 'rgba(255,255,255,.18)';
+  for (let i = 0; i < 4; i += 1) {
+    const x = 108 + i * 300;
+    ctx.beginPath();
+    ctx.moveTo(x, 42);
+    ctx.lineTo(x + 70, 42);
+    ctx.lineTo(x + 126, 188);
+    ctx.lineTo(x - 58, 188);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.fillStyle = '#071625';
+  ctx.fillRect(0, 52, W, 150);
+  ctx.fillStyle = '#102f4b';
+  ctx.fillRect(0, 74, W, 34);
+  ctx.fillStyle = '#0d263d';
+  ctx.fillRect(0, 136, W, 30);
+  ctx.fillStyle = 'rgba(255,255,255,.14)';
+  for (let y = 70; y <= 188; y += 22) {
+    ctx.fillRect(0, y, W, 2);
+  }
+
+  ctx.fillStyle = 'rgba(0,0,0,.28)';
+  ctx.beginPath();
+  ctx.moveTo(0, 196);
+  ctx.lineTo(W, 196);
+  ctx.lineTo(W, 222);
+  ctx.quadraticCurveTo(W / 2, 202, 0, 222);
+  ctx.closePath();
+  ctx.fill();
 
   crowdDots.forEach((dot) => {
     ctx.fillStyle = dot.color;
     ctx.fillRect(dot.x, dot.y, dot.w, dot.h);
   });
 
-  ctx.fillStyle = '#073762';
-  ctx.fillRect(0, 196, W, 44);
+  ctx.fillStyle = '#083c6d';
+  ctx.fillRect(0, 198, W, 42);
+  ctx.fillStyle = 'rgba(255,255,255,.12)';
+  ctx.fillRect(0, 198, W, 6);
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 22px system-ui';
   ctx.textAlign = 'center';
@@ -659,12 +697,59 @@ function drawStadium() {
 }
 
 function drawPitch() {
-  for (let i = 0; i < 8; i += 1) {
-    ctx.fillStyle = i % 2 === 0 ? '#36b83f' : '#2fad37';
-    ctx.fillRect(0, 260 + i * 64, W, 64);
+  const pitch = ctx.createLinearGradient(0, 260, 0, H);
+  pitch.addColorStop(0, '#238d30');
+  pitch.addColorStop(0.5, '#35b842');
+  pitch.addColorStop(1, '#1d8429');
+  ctx.fillStyle = pitch;
+  ctx.fillRect(0, 260, W, H - 260);
+
+  const stripeCount = 9;
+  const horizonY = 260;
+  for (let i = 0; i < stripeCount; i += 1) {
+    const y1 = horizonY + i * 52;
+    const y2 = i === stripeCount - 1 ? H : horizonY + (i + 1) * 52;
+    const inset1 = Math.max(0, 215 - i * 29);
+    const inset2 = Math.max(0, 215 - (i + 1) * 29);
+
+    ctx.fillStyle = i % 2 === 0 ? 'rgba(74, 196, 77, .42)' : 'rgba(22, 130, 39, .32)';
+    ctx.beginPath();
+    ctx.moveTo(inset1, y1);
+    ctx.lineTo(W - inset1, y1);
+    ctx.lineTo(W - inset2, y2);
+    ctx.lineTo(inset2, y2);
+    ctx.closePath();
+    ctx.fill();
   }
 
-  // perspective penalty area
+  ctx.strokeStyle = 'rgba(255,255,255,.08)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 34; i += 1) {
+    const y = 272 + i * 13;
+    const wobble = (i % 4) * 18;
+    ctx.beginPath();
+    ctx.moveTo((wobble * 7) % W, y);
+    ctx.lineTo(Math.min(W, ((wobble * 7) % W) + 64), y + 2);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(5,55,16,.22)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 11; i += 1) {
+    const x = 96 + i * 96;
+    ctx.beginPath();
+    ctx.moveTo(560 + (x - 560) * 0.2, 264);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,.38)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(560, 260);
+  ctx.lineTo(560, 612);
+  ctx.stroke();
+
   ctx.strokeStyle = 'rgba(255,255,255,.92)';
   ctx.lineWidth = 5;
   ctx.beginPath();
@@ -688,42 +773,282 @@ function drawPitch() {
   ctx.moveTo(0, 612);
   ctx.lineTo(W, 612);
   ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,255,255,.88)';
+  ctx.beginPath();
+  ctx.arc(BALL_START.x, BALL_START.y + 6, 5, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 function drawGoal() {
   ctx.save();
-  ctx.lineWidth = 7;
-  ctx.strokeStyle = '#ffffff';
-  ctx.fillStyle = 'rgba(255,255,255,.04)';
-  ctx.fillRect(GOAL.x, GOAL.y, GOAL.w, GOAL.h);
-  ctx.strokeRect(GOAL.x, GOAL.y, GOAL.w, GOAL.h);
 
-  // net
-  ctx.lineWidth = 1.4;
-  ctx.strokeStyle = 'rgba(255,255,255,.64)';
-  for (let x = GOAL.x + 18; x < GOAL.x + GOAL.w; x += 22) {
-    ctx.beginPath();
-    ctx.moveTo(x, GOAL.y + 2);
-    ctx.lineTo(x - 35, GOAL.y + GOAL.h);
-    ctx.stroke();
-  }
-  for (let y = GOAL.y + 18; y < GOAL.y + GOAL.h; y += 18) {
-    ctx.beginPath();
-    ctx.moveTo(GOAL.x, y);
-    ctx.lineTo(GOAL.x + GOAL.w, y + 6);
-    ctx.stroke();
-  }
-
-  // back posts shadow
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = 'rgba(0,0,0,.35)';
-  ctx.beginPath();
-  ctx.moveTo(GOAL.x - 18, GOAL.y + 24);
-  ctx.lineTo(GOAL.x, GOAL.y);
-  ctx.moveTo(GOAL.x + GOAL.w + 18, GOAL.y + 24);
-  ctx.lineTo(GOAL.x + GOAL.w, GOAL.y);
-  ctx.stroke();
+  const geometry = goalGeometry();
+  drawGoalShadow(geometry);
+  drawGoalMouthDepth(geometry);
+  drawGoalSupportPoles(geometry);
+  drawGoalBackNet(geometry);
+  drawGoalRoofNet(geometry);
+  drawGoalSideNets(geometry);
+  drawGoalFrame(geometry);
   ctx.restore();
+}
+
+function goalGeometry() {
+  const netInset = 78;
+  const supportInset = 38;
+  const rearTopDrop = 42;
+  const rearBottomDrop = 18;
+  return {
+    front: {
+      lt: { x: GOAL.x, y: GOAL.y },
+      rt: { x: GOAL.x + GOAL.w, y: GOAL.y },
+      lb: { x: GOAL.x, y: GOAL.y + GOAL.h },
+      rb: { x: GOAL.x + GOAL.w, y: GOAL.y + GOAL.h },
+    },
+    back: {
+      lt: { x: GOAL.x + netInset, y: GOAL.y + rearTopDrop },
+      rt: { x: GOAL.x + GOAL.w - netInset, y: GOAL.y + rearTopDrop },
+      lb: { x: GOAL.x + netInset, y: GOAL.y + GOAL.h + rearBottomDrop },
+      rb: { x: GOAL.x + GOAL.w - netInset, y: GOAL.y + GOAL.h + rearBottomDrop },
+    },
+    support: {
+      lt: { x: GOAL.x + supportInset, y: GOAL.y + rearTopDrop - 8 },
+      rt: { x: GOAL.x + GOAL.w - supportInset, y: GOAL.y + rearTopDrop - 8 },
+      lb: { x: GOAL.x + supportInset, y: GOAL.y + GOAL.h + rearBottomDrop + 4 },
+      rb: { x: GOAL.x + GOAL.w - supportInset, y: GOAL.y + GOAL.h + rearBottomDrop + 4 },
+    },
+  };
+}
+
+function drawGoalShadow(goal) {
+  const shadow = ctx.createRadialGradient(
+    GOAL.x + GOAL.w / 2,
+    goal.front.lb.y + 12,
+    40,
+    GOAL.x + GOAL.w / 2,
+    goal.front.lb.y + 20,
+    GOAL.w * 0.68
+  );
+  shadow.addColorStop(0, 'rgba(0,0,0,.28)');
+  shadow.addColorStop(0.62, 'rgba(0,0,0,.15)');
+  shadow.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = shadow;
+  ctx.beginPath();
+  ctx.ellipse(GOAL.x + GOAL.w / 2, goal.front.lb.y + 18, GOAL.w * 0.67, 36, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(0,0,0,.12)';
+  ctx.beginPath();
+  ctx.moveTo(goal.front.lb.x - 16, goal.front.lb.y + 8);
+  ctx.lineTo(goal.front.rb.x + 16, goal.front.rb.y + 8);
+  ctx.lineTo(goal.back.rb.x + 46, goal.back.rb.y + 12);
+  ctx.lineTo(goal.back.lb.x - 46, goal.back.lb.y + 12);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawGoalMouthDepth(goal) {
+  const mouth = ctx.createLinearGradient(0, goal.front.lt.y, 0, goal.front.lb.y);
+  mouth.addColorStop(0, 'rgba(255,255,255,.035)');
+  mouth.addColorStop(0.62, 'rgba(255,255,255,.012)');
+  mouth.addColorStop(1, 'rgba(0,0,0,.055)');
+  ctx.fillStyle = mouth;
+  drawQuad(goal.front.lt, goal.front.rt, goal.front.rb, goal.front.lb, true, false);
+
+  ctx.strokeStyle = 'rgba(255,255,255,.18)';
+  ctx.lineWidth = 2;
+  drawLine({ x: goal.front.lt.x + 12, y: goal.front.lt.y + 12 }, { x: goal.front.lb.x + 12, y: goal.front.lb.y - 12 });
+  drawLine({ x: goal.front.rt.x - 12, y: goal.front.rt.y + 12 }, { x: goal.front.rb.x - 12, y: goal.front.rb.y - 12 });
+}
+
+function drawGoalSupportPoles(goal) {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.strokeStyle = 'rgba(16,26,36,.28)';
+  ctx.lineWidth = 7;
+  drawLine(goal.support.lt, goal.support.lb);
+  drawLine(goal.support.rt, goal.support.rb);
+  drawLine(goal.support.lt, goal.support.rt);
+
+  ctx.strokeStyle = 'rgba(224,238,248,.54)';
+  ctx.lineWidth = 3.5;
+  drawLine(goal.support.lt, goal.support.lb);
+  drawLine(goal.support.rt, goal.support.rb);
+  drawLine(goal.support.lt, goal.support.rt);
+}
+
+function drawGoalBackNet(goal) {
+  drawGoalPanel({
+    a: goal.back.lt,
+    b: goal.back.rt,
+    c: goal.back.rb,
+    d: goal.back.lb,
+    columns: 10,
+    rows: 6,
+    fill: 'rgba(232,246,255,.045)',
+    vertical: 'rgba(244,250,255,.42)',
+    horizontal: 'rgba(244,250,255,.32)',
+    lineWidth: 1.15,
+  });
+}
+
+function drawGoalRoofNet(goal) {
+  drawGoalPanel({
+    a: { x: goal.front.lt.x + 14, y: goal.front.lt.y + 7 },
+    b: { x: goal.front.rt.x - 14, y: goal.front.rt.y + 7 },
+    c: goal.back.rt,
+    d: goal.back.lt,
+    columns: 9,
+    rows: 4,
+    fill: 'rgba(235,247,255,.075)',
+    vertical: 'rgba(248,252,255,.58)',
+    horizontal: 'rgba(248,252,255,.38)',
+    lineWidth: 1.25,
+  });
+}
+
+function drawGoalSideNets(goal) {
+  drawGoalPanel({
+    a: { x: goal.front.lt.x + 8, y: goal.front.lt.y + 18 },
+    b: goal.support.lt,
+    c: goal.support.lb,
+    d: { x: goal.front.lt.x + 8, y: goal.front.lb.y - 12 },
+    columns: 2,
+    rows: 6,
+    fill: 'rgba(235,247,255,.018)',
+    vertical: 'rgba(248,252,255,.22)',
+    horizontal: 'rgba(248,252,255,.18)',
+    lineWidth: 1,
+  });
+
+  drawGoalPanel({
+    a: goal.support.rt,
+    b: { x: goal.front.rt.x - 8, y: goal.front.rt.y + 18 },
+    c: { x: goal.front.rt.x - 8, y: goal.front.rb.y - 12 },
+    d: goal.support.rb,
+    columns: 2,
+    rows: 6,
+    fill: 'rgba(235,247,255,.018)',
+    vertical: 'rgba(248,252,255,.22)',
+    horizontal: 'rgba(248,252,255,.18)',
+    lineWidth: 1,
+  });
+}
+
+function drawGoalFrame(goal) {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.strokeStyle = 'rgba(17,29,38,.36)';
+  ctx.lineWidth = 12;
+  drawLine(goal.back.lt, goal.back.rt);
+  drawLine(goal.back.lt, goal.back.lb);
+  drawLine(goal.back.rt, goal.back.rb);
+  drawLine(goal.back.lb, goal.back.rb);
+  drawLine(goal.front.lt, goal.support.lt);
+  drawLine(goal.front.rt, goal.support.rt);
+
+  ctx.strokeStyle = 'rgba(220,236,248,.62)';
+  ctx.lineWidth = 6;
+  drawLine(goal.back.lt, goal.back.rt);
+  drawLine(goal.back.lt, goal.back.lb);
+  drawLine(goal.back.rt, goal.back.rb);
+  drawLine(goal.back.lb, goal.back.rb);
+
+  ctx.strokeStyle = 'rgba(235,246,255,.76)';
+  ctx.lineWidth = 4;
+  drawLine(goal.front.lt, goal.support.lt);
+  drawLine(goal.front.rt, goal.support.rt);
+
+  const frontFrame = ctx.createLinearGradient(GOAL.x, GOAL.y, GOAL.x + GOAL.w, GOAL.y + GOAL.h);
+  frontFrame.addColorStop(0, '#eef8ff');
+  frontFrame.addColorStop(0.35, '#ffffff');
+  frontFrame.addColorStop(0.72, '#f8fdff');
+  frontFrame.addColorStop(1, '#c7d8e7');
+  ctx.strokeStyle = 'rgba(8,20,30,.48)';
+  ctx.lineWidth = 22;
+  drawLine(goal.front.lb, goal.front.lt);
+  drawLine(goal.front.lt, goal.front.rt);
+  drawLine(goal.front.rt, goal.front.rb);
+
+  ctx.strokeStyle = frontFrame;
+  ctx.lineWidth = 16;
+  drawLine(goal.front.lb, goal.front.lt);
+  drawLine(goal.front.lt, goal.front.rt);
+  drawLine(goal.front.rt, goal.front.rb);
+
+  ctx.strokeStyle = 'rgba(255,255,255,.95)';
+  ctx.lineWidth = 5.5;
+  drawLine({ x: goal.front.lt.x + 6, y: goal.front.lt.y + 5 }, { x: goal.front.rt.x - 6, y: goal.front.rt.y + 5 });
+  drawLine({ x: goal.front.lt.x + 6, y: goal.front.lt.y + 6 }, { x: goal.front.lb.x + 6, y: goal.front.lb.y - 6 });
+  drawLine({ x: goal.front.rt.x - 6, y: goal.front.rt.y + 6 }, { x: goal.front.rb.x - 6, y: goal.front.rb.y - 6 });
+
+  ctx.fillStyle = 'rgba(255,255,255,.92)';
+  ctx.beginPath();
+  ctx.arc(goal.front.lb.x, goal.front.lb.y, 8, 0, Math.PI * 2);
+  ctx.arc(goal.front.rb.x, goal.front.rb.y, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,.82)';
+  ctx.beginPath();
+  ctx.ellipse(goal.front.lb.x, goal.front.lb.y + 7, 18, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(goal.front.rb.x, goal.front.rb.y + 7, 18, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.beginPath();
+  ctx.ellipse(goal.back.lb.x, goal.back.lb.y + 7, 22, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(goal.back.rb.x, goal.back.rb.y + 7, 22, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawGoalPanel({ a, b, c, d, columns, rows, fill, vertical, horizontal, lineWidth }) {
+  ctx.fillStyle = fill;
+  drawQuad(a, b, c, d, true, false);
+
+  ctx.lineWidth = lineWidth;
+  ctx.strokeStyle = vertical;
+  for (let i = 1; i < columns; i += 1) {
+    const u = i / columns;
+    drawLine(quadPoint(a, b, c, d, u, 0), quadPoint(a, b, c, d, u, 1));
+  }
+
+  ctx.strokeStyle = horizontal;
+  for (let i = 1; i < rows; i += 1) {
+    const v = i / rows;
+    drawLine(quadPoint(a, b, c, d, 0, v), quadPoint(a, b, c, d, 1, v));
+  }
+}
+
+function drawQuad(a, b, c, d, fill, stroke) {
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.lineTo(c.x, c.y);
+  ctx.lineTo(d.x, d.y);
+  ctx.closePath();
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+function drawLine(a, b) {
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+}
+
+function lerpPoint(a, b, t) {
+  return {
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+  };
+}
+
+function quadPoint(a, b, c, d, u, v) {
+  return lerpPoint(lerpPoint(a, b, u), lerpPoint(d, c, u), v);
 }
 
 function drawScoreboard() {
@@ -828,115 +1153,242 @@ function drawCanvasCrest(team, x, y, radius) {
 
 function drawPlayer() {
   const team = selectedTeam;
-  drawFootballer(PLAYER_POS.x, PLAYER_POS.y, team.primary, team.secondary, true);
+  drawFootballer(PLAYER_POS.x, PLAYER_POS.y, team.primary, team.secondary, 0.88);
 }
 
 function drawGoalkeeper() {
   const color = '#c9ff11';
-  drawGoalkeeperFigure(game.keeper.x, game.keeper.y, color, game.keeper.lean);
+  drawGoalkeeperFigure(game.keeper.x, game.keeper.y, color, game.keeper.lean, 0.94);
 }
 
-function drawFootballer(x, y, primary, secondary, facingGoal = true) {
+function drawFootballer(x, y, primary, secondary, scale = 1) {
   ctx.save();
   ctx.translate(x, y);
+  ctx.scale(scale, scale);
 
-  // shadow
-  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  ctx.fillStyle = 'rgba(0,0,0,.28)';
   ctx.beginPath();
-  ctx.ellipse(0, 48, 36, 11, 0, 0, Math.PI * 2);
+  ctx.ellipse(1, 50, 42, 12, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // legs
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 9;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  ctx.strokeStyle = '#101820';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(-15, 46);
+  ctx.lineTo(-28, 51);
+  ctx.moveTo(16, 46);
+  ctx.lineTo(31, 52);
+  ctx.stroke();
+
+  ctx.strokeStyle = secondary;
+  ctx.lineWidth = 12;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(-13, 18);
-  ctx.lineTo(-18, 45);
-  ctx.moveTo(13, 18);
-  ctx.lineTo(18, 45);
+  ctx.moveTo(-14, 12);
+  ctx.lineTo(-17, 34);
+  ctx.moveTo(15, 12);
+  ctx.lineTo(17, 34);
   ctx.stroke();
 
-  ctx.strokeStyle = '#111111';
-  ctx.lineWidth = 5;
+  ctx.strokeStyle = '#f2f6ff';
+  ctx.lineWidth = 10;
   ctx.beginPath();
-  ctx.moveTo(-18, 45);
-  ctx.lineTo(-24, 48);
-  ctx.moveTo(18, 45);
-  ctx.lineTo(26, 48);
+  ctx.moveTo(-17, 33);
+  ctx.lineTo(-20, 47);
+  ctx.moveTo(17, 33);
+  ctx.lineTo(20, 47);
   ctx.stroke();
 
-  // shorts
-  ctx.fillStyle = secondary;
-  ctx.fillRect(-18, 4, 36, 20);
+  ctx.strokeStyle = primary;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-22, 39);
+  ctx.lineTo(-15, 39);
+  ctx.moveTo(15, 39);
+  ctx.lineTo(22, 39);
+  ctx.stroke();
 
-  // shirt stripes
-  ctx.fillStyle = primary;
-  ctx.fillRect(-22, -46, 44, 52);
   ctx.fillStyle = secondary;
-  for (let sx = -15; sx <= 15; sx += 14) {
-    ctx.fillRect(sx, -46, 7, 52);
+  roundRect(ctx, -24, -2, 48, 24, 6, true, false);
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.fillRect(-3, 1, 6, 20);
+
+  ctx.fillStyle = primary;
+  ctx.beginPath();
+  ctx.moveTo(-30, -52);
+  ctx.lineTo(30, -52);
+  ctx.lineTo(23, -4);
+  ctx.quadraticCurveTo(0, 6, -23, -4);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,.16)';
+  ctx.beginPath();
+  ctx.moveTo(-28, -50);
+  ctx.lineTo(28, -50);
+  ctx.lineTo(23, -40);
+  ctx.lineTo(-23, -40);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = secondary;
+  for (let sx = -18; sx <= 18; sx += 18) {
+    ctx.beginPath();
+    ctx.moveTo(sx - 4, -48);
+    ctx.lineTo(sx + 4, -48);
+    ctx.lineTo(sx + 2, -5);
+    ctx.lineTo(sx - 2, -5);
+    ctx.closePath();
+    ctx.fill();
   }
 
-  // arms
+  ctx.fillStyle = 'rgba(255,255,255,.72)';
+  roundRect(ctx, -9, -36, 18, 19, 4, true, false);
+  ctx.fillStyle = primary;
+  ctx.font = '900 13px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('9', 0, -26);
+
   ctx.strokeStyle = primary;
-  ctx.lineWidth = 9;
+  ctx.lineWidth = 13;
   ctx.beginPath();
-  ctx.moveTo(-23, -32);
-  ctx.lineTo(-34, -2);
-  ctx.moveTo(23, -32);
-  ctx.lineTo(34, -2);
+  ctx.moveTo(-27, -42);
+  ctx.lineTo(-40, -14);
+  ctx.moveTo(27, -42);
+  ctx.lineTo(40, -17);
   ctx.stroke();
 
-  // head
-  ctx.fillStyle = '#111';
+  ctx.strokeStyle = '#d7a77a';
+  ctx.lineWidth = 8;
   ctx.beginPath();
-  ctx.arc(0, -62, 12, 0, Math.PI * 2);
+  ctx.moveTo(-39, -14);
+  ctx.lineTo(-34, 3);
+  ctx.moveTo(39, -17);
+  ctx.lineTo(45, -1);
+  ctx.stroke();
+
+  ctx.fillStyle = '#d7a77a';
+  ctx.beginPath();
+  ctx.arc(-34, 5, 5, 0, Math.PI * 2);
+  ctx.arc(45, 1, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#d7a77a';
+  roundRect(ctx, -7, -67, 14, 15, 5, true, false);
+  ctx.fillStyle = '#c79263';
+  ctx.beginPath();
+  ctx.arc(0, -74, 17, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#151515';
+  ctx.beginPath();
+  ctx.arc(0, -80, 18, Math.PI * 0.95, Math.PI * 2.05);
+  ctx.fill();
+  ctx.fillRect(-15, -78, 30, 12);
+
+  ctx.fillStyle = 'rgba(255,255,255,.18)';
+  ctx.beginPath();
+  ctx.ellipse(0, -52, 30, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.restore();
 }
 
-function drawGoalkeeperFigure(x, y, color, lean) {
+function drawGoalkeeperFigure(x, y, color, lean, scale = 1) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(lean * 0.25);
+  ctx.scale(scale, scale);
+  ctx.rotate(lean * 0.18);
 
-  ctx.fillStyle = 'rgba(0,0,0,.20)';
+  ctx.fillStyle = 'rgba(0,0,0,.24)';
   ctx.beginPath();
-  ctx.ellipse(0, 58, 36, 9, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 62, 48, 12, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const dive = lean * 18;
+  const glove = '#f8fbff';
+  const dark = '#101820';
+
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(-18, 45);
+  ctx.lineTo(-36, 53);
+  ctx.moveTo(18, 45);
+  ctx.lineTo(36, 53);
+  ctx.stroke();
+
+  ctx.strokeStyle = '#f2f6ff';
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  ctx.moveTo(-17, 17);
+  ctx.lineTo(-24, 46);
+  ctx.moveTo(17, 17);
+  ctx.lineTo(24, 46);
+  ctx.stroke();
+
+  ctx.fillStyle = dark;
+  roundRect(ctx, -24, 2, 48, 24, 7, true, false);
+
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(-32, -36);
+  ctx.lineTo(32, -36);
+  ctx.lineTo(27, 10);
+  ctx.quadraticCurveTo(0, 21, -27, 10);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,.22)';
+  ctx.fillRect(-23, -31, 46, 8);
+  ctx.fillStyle = 'rgba(0,0,0,.16)';
+  ctx.fillRect(-3, -34, 6, 48);
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 13;
-  ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(-14, -8);
-  ctx.lineTo(-38 - lean * 20, -38);
-  ctx.moveTo(14, -8);
-  ctx.lineTo(38 - lean * 20, -38);
+  ctx.moveTo(-27, -26);
+  ctx.lineTo(-51 - dive, -10);
+  ctx.moveTo(27, -26);
+  ctx.lineTo(51 - dive, -10);
   ctx.stroke();
 
-  ctx.fillStyle = color;
-  ctx.fillRect(-25, -18, 50, 62);
-
-  ctx.fillStyle = '#111';
-  ctx.fillRect(-22, 38, 19, 28);
-  ctx.fillRect(3, 38, 19, 28);
-
-  ctx.strokeStyle = '#111';
-  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#d7a77a';
+  ctx.lineWidth = 8;
   ctx.beginPath();
-  ctx.moveTo(-13, 64);
-  ctx.lineTo(-24, 70);
-  ctx.moveTo(13, 64);
-  ctx.lineTo(24, 70);
+  ctx.moveTo(-50 - dive, -10);
+  ctx.lineTo(-62 - dive, 4);
+  ctx.moveTo(50 - dive, -10);
+  ctx.lineTo(62 - dive, 4);
   ctx.stroke();
 
-  ctx.fillStyle = '#ffd6ad';
+  ctx.fillStyle = glove;
   ctx.beginPath();
-  ctx.arc(0, -36, 18, 0, Math.PI * 2);
+  ctx.ellipse(-65 - dive, 6, 10, 13, -0.35, 0, Math.PI * 2);
+  ctx.ellipse(65 - dive, 6, 10, 13, 0.35, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(16,24,32,.35)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = '#d7a77a';
+  roundRect(ctx, -8, -51, 16, 14, 5, true, false);
+  ctx.beginPath();
+  ctx.arc(0, -62, 18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#151515';
+  ctx.beginPath();
+  ctx.arc(0, -68, 18, Math.PI * 0.95, Math.PI * 2.05);
+  ctx.fill();
+  ctx.fillRect(-15, -66, 30, 10);
 
   ctx.restore();
 }
