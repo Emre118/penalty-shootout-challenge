@@ -756,11 +756,11 @@ function prepareOpponentShotBeforeKeeperClick() {
 }
 
 function getOpponentHintDuration() {
-  if (game.suddenDeath) return 0.38;
+  if (game.suddenDeath) return 0.28;
 
-  const durations = [1.2, 1.0, 0.85, 0.7, 0.55];
+  const durations = [0.78, 0.63, 0.52, 0.42, 0.35];
   const attemptIndex = Math.min(game.opponentHistory.length, durations.length - 1);
-  return Math.max(0.33, durations[attemptIndex]);
+  return Math.max(0.25, durations[attemptIndex]);
 }
 
 function startOpponentShotHint(target) {
