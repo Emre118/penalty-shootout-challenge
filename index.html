@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Penalty Shootout Challenge</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <section id="menuScreen" class="screen active main-menu">
+      <div class="stadium-glow"></div>
+      <div class="menu-card">
+        <p class="eyebrow">Computer Graphics Final Project</p>
+        <h1>Penalty Shootout<br><span>Challenge</span></h1>
+        <p class="subtitle">Choose your club, take penalties, defend the goal, and win the shootout.</p>
+        <button id="playBtn" class="primary-btn">PLAY</button>
+        <button id="howBtn" class="secondary-btn">HOW TO PLAY</button>
+      </div>
+      <button id="soundBtn" class="sound-btn">SOUND: ON</button>
+    </section>
+
+    <section id="howScreen" class="screen info-screen">
+      <div class="panel wide-panel">
+        <h2>How to Play</h2>
+        <div class="instructions-grid">
+          <div>
+            <h3>When you shoot</h3>
+            <p>Use the three moving sliders at the bottom. Click the active slider or press <strong>Space</strong> to lock your choice.</p>
+            <p><strong>Direction:</strong> controls left and right placement.</p>
+            <p><strong>Height:</strong> controls low or high shot. Too high can miss the goal.</p>
+            <p><strong>Power:</strong> controls shot speed. Too slow is easy to save; too powerful can go wide.</p>
+          </div>
+          <div>
+            <h3>When you defend</h3>
+            <p>Click inside the goal to choose where your goalkeeper will dive.</p>
+            <p>The opponent shoots automatically. If your dive position is close to the shot, you save it.</p>
+            <p>Each goal gives <strong>100 points</strong>. After five rounds, a draw goes to <strong>Sudden Death</strong>.</p>
+          </div>
+        </div>
+        <button id="backFromHowBtn" class="secondary-btn">BACK</button>
+      </div>
+    </section>
+
+    <section id="teamScreen" class="screen team-screen">
+      <div class="panel team-panel">
+        <h2>Select Your Team</h2>
+        <p class="helper-text">Your player kit will use the selected club colors. The opponent will be selected randomly.</p>
+        <div id="teamGrid" class="team-grid"></div>
+        <div class="team-actions">
+          <button id="backFromTeamBtn" class="secondary-btn">BACK</button>
+          <button id="continueBtn" class="primary-btn" disabled>CONTINUE</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="previewScreen" class="screen preview-screen">
+      <div class="panel match-panel">
+        <p class="eyebrow">Match Preview</p>
+        <h2>Penalty Shootout</h2>
+        <div class="versus-box">
+          <div class="preview-team">
+            <div id="playerPreviewLogo" class="preview-logo"></div>
+            <h3 id="playerPreviewName">Your Team</h3>
+          </div>
+          <div class="versus-text">VS</div>
+          <div class="preview-team">
+            <div id="opponentPreviewLogo" class="preview-logo"></div>
+            <h3 id="opponentPreviewName">Opponent</h3>
+          </div>
+        </div>
+        <button id="startMatchBtn" class="primary-btn">START MATCH</button>
+        <button id="backFromPreviewBtn" class="secondary-btn">CHANGE TEAM</button>
+      </div>
+    </section>
+
+    <section id="gameScreen" class="screen game-screen">
+      <canvas id="gameCanvas" width="1120" height="720" aria-label="Penalty Shootout Challenge game canvas"></canvas>
+      <div id="canvasHint" class="canvas-hint">Click the active control or press Space.</div>
+    </section>
+
+    <section id="finalScreen" class="screen final-screen">
+      <div class="panel final-panel">
+        <p class="eyebrow">Final Result</p>
+        <h2 id="finalTitle">You Won!</h2>
+        <div class="final-score-box">
+          <div>
+            <div id="finalPlayerLogo" class="small-crest"></div>
+            <h3 id="finalPlayerName">Player</h3>
+            <p id="finalPlayerScore">0</p>
+          </div>
+          <div class="dash">-</div>
+          <div>
+            <div id="finalOpponentLogo" class="small-crest"></div>
+            <h3 id="finalOpponentName">Opponent</h3>
+            <p id="finalOpponentScore">0</p>
+          </div>
+        </div>
+        <p id="finalSummary" class="helper-text"></p>
+        <button id="playAgainBtn" class="primary-btn">PLAY AGAIN</button>
+        <button id="menuAgainBtn" class="secondary-btn">MAIN MENU</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
