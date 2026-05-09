@@ -326,21 +326,57 @@ function updateControlMarkers(dt) {
 }
 
 function updateKeeper(dt) {
-  const ease = Math.min(1, dt * 9);
+  const ease = Math.min(1, dt * 10.5);
   game.keeper.x += (game.keeper.tx - game.keeper.x) * ease;
   game.keeper.y += (game.keeper.ty - game.keeper.y) * ease;
-  game.keeper.lean += ((game.keeper.tx - KEEPER_HOME.x) / 130 - game.keeper.lean) * ease;
+
+  const diveX = clamp((game.keeper.tx - KEEPER_HOME.x) / 155, -1.25, 1.25);
+  const diveY = clamp((KEEPER_HOME.y - game.keeper.ty) / 130, -0.7, 0.9);
+  const diveDistance = Math.hypot(game.keeper.tx - KEEPER_HOME.x, game.keeper.ty - KEEPER_HOME.y);
+  const diveAmount = clamp(diveDistance / 145, 0, 1);
+
+  // Lean combines horizontal dive and high-shot stretch. This makes the keeper rotate
+  // like a real dive instead of only sliding left/right.
+  const targetLean = diveAmount > 0.12 ? diveX * (0.95 + Math.max(0, diveY) * 0.18) : 0;
+  game.keeper.lean += (targetLean - game.keeper.lean) * ease;
 }
 
 function updateShot(dt) {
   if (!game.shot) return;
   game.shot.time += dt * game.shot.speedMultiplier;
-  const t = Math.min(1, game.shot.time / game.shot.duration);
-  const eased = easeInOutCubic(t);
-  game.shot.x = lerp(game.shot.start.x, game.shot.target.x, eased);
-  game.shot.y = lerp(game.shot.start.y, game.shot.target.y, eased);
-  game.shot.scale = lerp(1.55, 0.62, eased);
-  game.shot.rotation += dt * (8 + game.shot.power * 11);
+
+  const kickDelay = game.shot.kickDelay || 0;
+  const flightTime = Math.max(0, game.shot.time - kickDelay);
+  const t = Math.min(1, flightTime / game.shot.duration);
+
+  // Before the player's foot reaches the ball, keep the ball on the penalty spot.
+  // This creates a real run-up/kick moment instead of the ball moving immediately.
+  if (flightTime <= 0) {
+    game.shot.x = game.shot.start.x;
+    game.shot.y = game.shot.start.y;
+    game.shot.scale = 1.55;
+  } else {
+    if (game.shot.shooter === 'player' && game.phaseMessage === 'Run up!') {
+      game.phaseMessage = 'Shot!';
+    }
+
+    const eased = easeInOutCubic(t);
+
+    // More realistic ball physics:
+    // - x movement is still controlled by Direction.
+    // - y movement uses a curved flight path instead of a straight line.
+    // - High + low-power shots behave like a Panenka: slow chip, rises first, then drops.
+    // - High + high-power shots can still fly over the bar.
+    const x = lerp(game.shot.start.x, game.shot.target.x, eased);
+    const lineY = lerp(game.shot.start.y, game.shot.target.y, eased);
+    const arc = Math.sin(Math.PI * eased) * game.shot.arcLift;
+    const lateDrop = Math.pow(eased, 2.2) * game.shot.gravityDrop;
+
+    game.shot.x = x;
+    game.shot.y = lineY - arc + lateDrop;
+    game.shot.scale = lerp(1.55, game.shot.endScale || 0.62, eased);
+    game.shot.rotation += dt * (5 + game.shot.power * 15);
+  }
 
   if (t > 0.38) {
     const keeperEase = Math.min(1, (t - 0.38) / 0.42);
@@ -393,7 +429,12 @@ function evaluateShot(shot) {
   const dx = shot.target.x - shot.keeperTarget.x;
   const dy = shot.target.y - shot.keeperTarget.y;
   const distance = Math.hypot(dx, dy);
-  const saveRadius = 118 - shot.power * 45 + (shot.height < 0.24 ? 12 : 0);
+
+  // Slow chips are easier to read if the keeper picks the correct spot.
+  // Powerful shots are harder to save because they arrive faster.
+  const chipPenalty = shot.power < 0.28 ? 18 : 0;
+  const highChipBonus = shot.height > 0.78 && shot.power < 0.34 ? -8 : 0;
+  const saveRadius = 108 - shot.power * 38 + chipPenalty + highChipBonus + (shot.height < 0.20 ? 10 : 0);
   const saved = distance < saveRadius;
 
   if (saved) {
@@ -483,8 +524,8 @@ function createPlayerShot() {
   game.shot = shot;
   game.activeControl = null;
   game.mode = 'playerShot';
-  game.phaseMessage = 'Shot!';
-  canvasHint.textContent = 'Watch the shot result.';
+  game.phaseMessage = 'Run up!';
+  canvasHint.textContent = 'Watch the run-up and shot result.';
 }
 
 function chooseKeeperTargetAgainstPlayer(shot) {
@@ -541,17 +582,67 @@ function generateOpponentShotValues() {
 }
 
 function buildShotFromValues({ shooter, direction, height, power }) {
-  const dirAmount = (direction - 0.5) * 2; // -1 to 1
-  const powerWildness = Math.max(0, power - 0.88) * 1.25;
-  const weakPenalty = Math.max(0, 0.12 - power) * 1.2;
-  const targetX = GOAL.x + GOAL.w / 2 + dirAmount * (GOAL.w / 2) * (1.03 + powerWildness);
-  const targetY = GOAL.y + GOAL.h - height * (GOAL.h * 1.03) + weakPenalty * 75;
-  const overByHeight = height > 0.94;
-  const overByPower = power > 0.96 && height > 0.70;
-  const tooWide = targetX < GOAL.x + 8 || targetX > GOAL.x + GOAL.w - 8;
-  const tooHigh = targetY < GOAL.y + 4 || overByHeight || overByPower;
-  const tooWeak = power < 0.06;
-  const inGoal = !tooWide && !tooHigh && !tooWeak;
+  const safeDirection = clamp(direction, 0, 1);
+  const safeHeight = clamp(height, 0, 1);
+  const safePower = clamp(power, 0, 1);
+
+  const centerX = GOAL.x + GOAL.w / 2;
+  const dirAmount = (safeDirection - 0.5) * 2; // -1 left, +1 right
+  const edgeAmount = Math.abs(dirAmount);
+
+  // Direction controls the horizontal aim. Extreme direction + high power may go wide.
+  // Low-power chip shots stay more controlled, like a Panenka.
+  const postInside = GOAL.w / 2 - 24;
+  const wideRisk = Math.max(0, edgeAmount - 0.82) / 0.18;
+  const highPowerWildness = Math.max(0, safePower - 0.72) * 125;
+  const targetX = centerX + dirAmount * (postInside + wideRisk * (22 + highPowerWildness));
+
+  // Height controls the vertical aim. The important part:
+  // high + slow is NOT automatically over the bar. It becomes a chip/Panenka that drops.
+  const bottomInside = GOAL.y + GOAL.h - 28;
+  const topInside = GOAL.y + 34;
+  let targetY = lerp(bottomInside, topInside, safeHeight);
+
+  // Very weak, low shots may die before reaching the goal.
+  const weakLowShot = safePower < 0.08 && safeHeight < 0.45;
+  if (weakLowShot) {
+    targetY += lerp(64, 18, safePower / 0.08);
+  }
+
+  // High + high-power shots can fly over the crossbar.
+  // High + low-power shots stay inside as a Panenka-style chip.
+  const overBarRisk = Math.max(0, safeHeight - 0.88) / 0.12;
+  const powerOverRisk = Math.max(0, safePower - 0.72) / 0.28;
+  const overAmount = overBarRisk * powerOverRisk * 105;
+  targetY -= overAmount;
+
+  // Panenka/chip characteristics.
+  const isPanenka = safeHeight > 0.76 && safePower < 0.34;
+  const chipFactor = clamp((0.46 - safePower) / 0.46, 0, 1);
+  const heightFactor = clamp(safeHeight, 0, 1);
+
+  // Arc lift makes the ball rise and then fall. This is what fixes the unrealistic straight line.
+  const arcLift =
+    24 +
+    heightFactor * 42 +
+    chipFactor * 58 +
+    (isPanenka ? 38 : 0) -
+    safePower * 20;
+
+  // Gravity drop is stronger for slow chips, so the ball visibly comes down near the goal.
+  const gravityDrop = isPanenka ? 22 + chipFactor * 18 : chipFactor * 12;
+
+  // Slow chip takes longer; powerful shots are flatter and faster.
+  const duration = isPanenka ? lerp(1.75, 1.25, safePower / 0.34) : lerp(1.32, 0.64, safePower);
+
+  // This hitbox matches the visible goal mouth. If the final ball position is inside,
+  // it is a goal/save situation; if it finishes outside, it is a real miss.
+  const tolerance = 4;
+  const inGoal =
+    targetX >= GOAL.x + tolerance &&
+    targetX <= GOAL.x + GOAL.w - tolerance &&
+    targetY >= GOAL.y + tolerance &&
+    targetY <= GOAL.y + GOAL.h - tolerance;
 
   return {
     shooter,
@@ -560,11 +651,16 @@ function buildShotFromValues({ shooter, direction, height, power }) {
     y: BALL_START.y,
     target: { x: targetX, y: targetY },
     inGoal,
-    direction,
-    height,
-    power,
+    direction: safeDirection,
+    height: safeHeight,
+    power: safePower,
+    isPanenka,
+    arcLift,
+    gravityDrop,
+    endScale: isPanenka ? 0.68 : 0.62,
     time: 0,
-    duration: lerp(1.3, 0.68, power),
+    duration,
+    kickDelay: shooter === 'player' ? 0.58 : 0,
     speedMultiplier: 1,
     rotation: 0,
     scale: 1,
@@ -780,275 +876,182 @@ function drawPitch() {
   ctx.fill();
 }
 
+
+
 function drawGoal() {
   ctx.save();
 
-  const geometry = goalGeometry();
-  drawGoalShadow(geometry);
-  drawGoalMouthDepth(geometry);
-  drawGoalSupportPoles(geometry);
-  drawGoalBackNet(geometry);
-  drawGoalRoofNet(geometry);
-  drawGoalSideNets(geometry);
-  drawGoalFrame(geometry);
-  ctx.restore();
-}
+  const left = GOAL.x;
+  const top = GOAL.y;
+  const width = GOAL.w;
+  const height = GOAL.h;
+  const right = left + width;
+  const bottom = top + height;
+  const backInsetX = 42;
+  const backTopY = top + 22;
+  const backBottomY = bottom - 4;
 
-function goalGeometry() {
-  const netInset = 78;
-  const supportInset = 38;
-  const rearTopDrop = 42;
-  const rearBottomDrop = 18;
-  return {
-    front: {
-      lt: { x: GOAL.x, y: GOAL.y },
-      rt: { x: GOAL.x + GOAL.w, y: GOAL.y },
-      lb: { x: GOAL.x, y: GOAL.y + GOAL.h },
-      rb: { x: GOAL.x + GOAL.w, y: GOAL.y + GOAL.h },
-    },
-    back: {
-      lt: { x: GOAL.x + netInset, y: GOAL.y + rearTopDrop },
-      rt: { x: GOAL.x + GOAL.w - netInset, y: GOAL.y + rearTopDrop },
-      lb: { x: GOAL.x + netInset, y: GOAL.y + GOAL.h + rearBottomDrop },
-      rb: { x: GOAL.x + GOAL.w - netInset, y: GOAL.y + GOAL.h + rearBottomDrop },
-    },
-    support: {
-      lt: { x: GOAL.x + supportInset, y: GOAL.y + rearTopDrop - 8 },
-      rt: { x: GOAL.x + GOAL.w - supportInset, y: GOAL.y + rearTopDrop - 8 },
-      lb: { x: GOAL.x + supportInset, y: GOAL.y + GOAL.h + rearBottomDrop + 4 },
-      rb: { x: GOAL.x + GOAL.w - supportInset, y: GOAL.y + GOAL.h + rearBottomDrop + 4 },
-    },
-  };
-}
+  // back support poles outside the goal, similar to reference
+  ctx.strokeStyle = '#9aa3ad';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(left - 22, top - 18);
+  ctx.lineTo(left - 22, bottom - 48);
+  ctx.moveTo(right + 22, top - 18);
+  ctx.lineTo(right + 22, bottom - 48);
+  ctx.stroke();
 
-function drawGoalShadow(goal) {
-  const shadow = ctx.createRadialGradient(
-    GOAL.x + GOAL.w / 2,
-    goal.front.lb.y + 12,
-    40,
-    GOAL.x + GOAL.w / 2,
-    goal.front.lb.y + 20,
-    GOAL.w * 0.68
-  );
-  shadow.addColorStop(0, 'rgba(0,0,0,.28)');
-  shadow.addColorStop(0.62, 'rgba(0,0,0,.15)');
+  // ground shadow
+  const shadow = ctx.createRadialGradient(left + width / 2, bottom + 8, 50, left + width / 2, bottom + 18, width * 0.75);
+  shadow.addColorStop(0, 'rgba(0,0,0,0.28)');
   shadow.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = shadow;
   ctx.beginPath();
-  ctx.ellipse(GOAL.x + GOAL.w / 2, goal.front.lb.y + 18, GOAL.w * 0.67, 36, 0, 0, Math.PI * 2);
+  ctx.ellipse(left + width / 2, bottom + 16, width * 0.72, 24, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = 'rgba(0,0,0,.12)';
+  // subtle net background so the net is always visible
+  ctx.fillStyle = 'rgba(255,255,255,0.07)';
+  ctx.fillRect(left + 3, top + 3, width - 6, height - 6);
+
+  // top net plane
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
   ctx.beginPath();
-  ctx.moveTo(goal.front.lb.x - 16, goal.front.lb.y + 8);
-  ctx.lineTo(goal.front.rb.x + 16, goal.front.rb.y + 8);
-  ctx.lineTo(goal.back.rb.x + 46, goal.back.rb.y + 12);
-  ctx.lineTo(goal.back.lb.x - 46, goal.back.lb.y + 12);
+  ctx.moveTo(left + 10, top + 8);
+  ctx.lineTo(right - 10, top + 8);
+  ctx.lineTo(right - backInsetX, backTopY);
+  ctx.lineTo(left + backInsetX, backTopY);
   ctx.closePath();
   ctx.fill();
-}
 
-function drawGoalMouthDepth(goal) {
-  const mouth = ctx.createLinearGradient(0, goal.front.lt.y, 0, goal.front.lb.y);
-  mouth.addColorStop(0, 'rgba(255,255,255,.035)');
-  mouth.addColorStop(0.62, 'rgba(255,255,255,.012)');
-  mouth.addColorStop(1, 'rgba(0,0,0,.055)');
-  ctx.fillStyle = mouth;
-  drawQuad(goal.front.lt, goal.front.rt, goal.front.rb, goal.front.lb, true, false);
+  // side net planes
+  ctx.beginPath();
+  ctx.moveTo(left + 10, top + 8);
+  ctx.lineTo(left + backInsetX, backTopY);
+  ctx.lineTo(left + backInsetX, backBottomY);
+  ctx.lineTo(left + 10, bottom - 8);
+  ctx.closePath();
+  ctx.fill();
 
-  ctx.strokeStyle = 'rgba(255,255,255,.18)';
-  ctx.lineWidth = 2;
-  drawLine({ x: goal.front.lt.x + 12, y: goal.front.lt.y + 12 }, { x: goal.front.lb.x + 12, y: goal.front.lb.y - 12 });
-  drawLine({ x: goal.front.rt.x - 12, y: goal.front.rt.y + 12 }, { x: goal.front.rb.x - 12, y: goal.front.rb.y - 12 });
-}
+  ctx.beginPath();
+  ctx.moveTo(right - backInsetX, backTopY);
+  ctx.lineTo(right - 10, top + 8);
+  ctx.lineTo(right - 10, bottom - 8);
+  ctx.lineTo(right - backInsetX, backBottomY);
+  ctx.closePath();
+  ctx.fill();
 
-function drawGoalSupportPoles(goal) {
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  // dense front net
+  ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+  ctx.lineWidth = 1;
+  for (let x = left + 12; x < right - 8; x += 16) {
+    ctx.beginPath();
+    ctx.moveTo(x, top + 2);
+    ctx.lineTo(x, bottom - 2);
+    ctx.stroke();
+  }
+  for (let y = top + 12; y < bottom - 4; y += 14) {
+    ctx.beginPath();
+    ctx.moveTo(left + 2, y);
+    ctx.lineTo(right - 2, y);
+    ctx.stroke();
+  }
 
-  ctx.strokeStyle = 'rgba(16,26,36,.28)';
-  ctx.lineWidth = 7;
-  drawLine(goal.support.lt, goal.support.lb);
-  drawLine(goal.support.rt, goal.support.rb);
-  drawLine(goal.support.lt, goal.support.rt);
+  // roof net lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.46)';
+  for (let i = 1; i < 13; i += 1) {
+    const t = i / 13;
+    const x1 = left + 10 + (width - 20) * t;
+    const x2 = left + backInsetX + (width - 2 * backInsetX) * t;
+    ctx.beginPath();
+    ctx.moveTo(x1, top + 8);
+    ctx.lineTo(x2, backTopY);
+    ctx.stroke();
+  }
+  for (let i = 1; i < 4; i += 1) {
+    const t = i / 4;
+    const y = top + 8 + (backTopY - (top + 8)) * t;
+    const xL = left + 10 + (backInsetX - 10) * t;
+    const xR = right - 10 - (backInsetX - 10) * t;
+    ctx.beginPath();
+    ctx.moveTo(xL, y);
+    ctx.lineTo(xR, y);
+    ctx.stroke();
+  }
 
-  ctx.strokeStyle = 'rgba(224,238,248,.54)';
-  ctx.lineWidth = 3.5;
-  drawLine(goal.support.lt, goal.support.lb);
-  drawLine(goal.support.rt, goal.support.rb);
-  drawLine(goal.support.lt, goal.support.rt);
-}
+  // side net lines
+  for (const s of [-1, 1]) {
+    const fx = s < 0 ? left + 10 : right - 10;
+    const bx = s < 0 ? left + backInsetX : right - backInsetX;
+    ctx.strokeStyle = 'rgba(255,255,255,0.34)';
+    for (let i = 1; i < 4; i += 1) {
+      const t = i / 4;
+      const x = fx + (bx - fx) * t;
+      ctx.beginPath();
+      ctx.moveTo(x, top + 8 + (backTopY - (top + 8)) * t);
+      ctx.lineTo(x, bottom - 8 + (backBottomY - (bottom - 8)) * t);
+      ctx.stroke();
+    }
+    for (let y = top + 18; y < bottom - 8; y += 16) {
+      const t = (y - (top + 8)) / ((bottom - 8) - (top + 8));
+      ctx.beginPath();
+      ctx.moveTo(fx, y);
+      ctx.lineTo(bx, backTopY + (backBottomY - backTopY) * t);
+      ctx.stroke();
+    }
+  }
 
-function drawGoalBackNet(goal) {
-  drawGoalPanel({
-    a: goal.back.lt,
-    b: goal.back.rt,
-    c: goal.back.rb,
-    d: goal.back.lb,
-    columns: 10,
-    rows: 6,
-    fill: 'rgba(232,246,255,.045)',
-    vertical: 'rgba(244,250,255,.42)',
-    horizontal: 'rgba(244,250,255,.32)',
-    lineWidth: 1.15,
-  });
-}
-
-function drawGoalRoofNet(goal) {
-  drawGoalPanel({
-    a: { x: goal.front.lt.x + 14, y: goal.front.lt.y + 7 },
-    b: { x: goal.front.rt.x - 14, y: goal.front.rt.y + 7 },
-    c: goal.back.rt,
-    d: goal.back.lt,
-    columns: 9,
-    rows: 4,
-    fill: 'rgba(235,247,255,.075)',
-    vertical: 'rgba(248,252,255,.58)',
-    horizontal: 'rgba(248,252,255,.38)',
-    lineWidth: 1.25,
-  });
-}
-
-function drawGoalSideNets(goal) {
-  drawGoalPanel({
-    a: { x: goal.front.lt.x + 8, y: goal.front.lt.y + 18 },
-    b: goal.support.lt,
-    c: goal.support.lb,
-    d: { x: goal.front.lt.x + 8, y: goal.front.lb.y - 12 },
-    columns: 2,
-    rows: 6,
-    fill: 'rgba(235,247,255,.018)',
-    vertical: 'rgba(248,252,255,.22)',
-    horizontal: 'rgba(248,252,255,.18)',
-    lineWidth: 1,
-  });
-
-  drawGoalPanel({
-    a: goal.support.rt,
-    b: { x: goal.front.rt.x - 8, y: goal.front.rt.y + 18 },
-    c: { x: goal.front.rt.x - 8, y: goal.front.rb.y - 12 },
-    d: goal.support.rb,
-    columns: 2,
-    rows: 6,
-    fill: 'rgba(235,247,255,.018)',
-    vertical: 'rgba(248,252,255,.22)',
-    horizontal: 'rgba(248,252,255,.18)',
-    lineWidth: 1,
-  });
-}
-
-function drawGoalFrame(goal) {
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
-  ctx.strokeStyle = 'rgba(17,29,38,.36)';
-  ctx.lineWidth = 12;
-  drawLine(goal.back.lt, goal.back.rt);
-  drawLine(goal.back.lt, goal.back.lb);
-  drawLine(goal.back.rt, goal.back.rb);
-  drawLine(goal.back.lb, goal.back.rb);
-  drawLine(goal.front.lt, goal.support.lt);
-  drawLine(goal.front.rt, goal.support.rt);
-
-  ctx.strokeStyle = 'rgba(220,236,248,.62)';
-  ctx.lineWidth = 6;
-  drawLine(goal.back.lt, goal.back.rt);
-  drawLine(goal.back.lt, goal.back.lb);
-  drawLine(goal.back.rt, goal.back.rb);
-  drawLine(goal.back.lb, goal.back.rb);
-
-  ctx.strokeStyle = 'rgba(235,246,255,.76)';
+  // rear frame
+  ctx.strokeStyle = 'rgba(205,215,225,0.9)';
   ctx.lineWidth = 4;
-  drawLine(goal.front.lt, goal.support.lt);
-  drawLine(goal.front.rt, goal.support.rt);
-
-  const frontFrame = ctx.createLinearGradient(GOAL.x, GOAL.y, GOAL.x + GOAL.w, GOAL.y + GOAL.h);
-  frontFrame.addColorStop(0, '#eef8ff');
-  frontFrame.addColorStop(0.35, '#ffffff');
-  frontFrame.addColorStop(0.72, '#f8fdff');
-  frontFrame.addColorStop(1, '#c7d8e7');
-  ctx.strokeStyle = 'rgba(8,20,30,.48)';
-  ctx.lineWidth = 22;
-  drawLine(goal.front.lb, goal.front.lt);
-  drawLine(goal.front.lt, goal.front.rt);
-  drawLine(goal.front.rt, goal.front.rb);
-
-  ctx.strokeStyle = frontFrame;
-  ctx.lineWidth = 16;
-  drawLine(goal.front.lb, goal.front.lt);
-  drawLine(goal.front.lt, goal.front.rt);
-  drawLine(goal.front.rt, goal.front.rb);
-
-  ctx.strokeStyle = 'rgba(255,255,255,.95)';
-  ctx.lineWidth = 5.5;
-  drawLine({ x: goal.front.lt.x + 6, y: goal.front.lt.y + 5 }, { x: goal.front.rt.x - 6, y: goal.front.rt.y + 5 });
-  drawLine({ x: goal.front.lt.x + 6, y: goal.front.lt.y + 6 }, { x: goal.front.lb.x + 6, y: goal.front.lb.y - 6 });
-  drawLine({ x: goal.front.rt.x - 6, y: goal.front.rt.y + 6 }, { x: goal.front.rb.x - 6, y: goal.front.rb.y - 6 });
-
-  ctx.fillStyle = 'rgba(255,255,255,.92)';
   ctx.beginPath();
-  ctx.arc(goal.front.lb.x, goal.front.lb.y, 8, 0, Math.PI * 2);
-  ctx.arc(goal.front.rb.x, goal.front.rb.y, 8, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(255,255,255,.82)';
-  ctx.beginPath();
-  ctx.ellipse(goal.front.lb.x, goal.front.lb.y + 7, 18, 6, 0, 0, Math.PI * 2);
-  ctx.ellipse(goal.front.rb.x, goal.front.rb.y + 7, 18, 6, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(0,0,0,.18)';
-  ctx.beginPath();
-  ctx.ellipse(goal.back.lb.x, goal.back.lb.y + 7, 22, 5, 0, 0, Math.PI * 2);
-  ctx.ellipse(goal.back.rb.x, goal.back.rb.y + 7, 22, 5, 0, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawGoalPanel({ a, b, c, d, columns, rows, fill, vertical, horizontal, lineWidth }) {
-  ctx.fillStyle = fill;
-  drawQuad(a, b, c, d, true, false);
-
-  ctx.lineWidth = lineWidth;
-  ctx.strokeStyle = vertical;
-  for (let i = 1; i < columns; i += 1) {
-    const u = i / columns;
-    drawLine(quadPoint(a, b, c, d, u, 0), quadPoint(a, b, c, d, u, 1));
-  }
-
-  ctx.strokeStyle = horizontal;
-  for (let i = 1; i < rows; i += 1) {
-    const v = i / rows;
-    drawLine(quadPoint(a, b, c, d, 0, v), quadPoint(a, b, c, d, 1, v));
-  }
-}
-
-function drawQuad(a, b, c, d, fill, stroke) {
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
-  ctx.lineTo(c.x, c.y);
-  ctx.lineTo(d.x, d.y);
-  ctx.closePath();
-  if (fill) ctx.fill();
-  if (stroke) ctx.stroke();
-}
-
-function drawLine(a, b) {
-  ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.lineTo(b.x, b.y);
+  ctx.moveTo(left + backInsetX, backTopY);
+  ctx.lineTo(right - backInsetX, backTopY);
+  ctx.lineTo(right - backInsetX, backBottomY);
+  ctx.moveTo(left + backInsetX, backTopY);
+  ctx.lineTo(left + backInsetX, backBottomY);
+  ctx.moveTo(left + backInsetX, backBottomY);
+  ctx.lineTo(right - backInsetX, backBottomY);
   ctx.stroke();
-}
 
-function lerpPoint(a, b, t) {
-  return {
-    x: lerp(a.x, b.x, t),
-    y: lerp(a.y, b.y, t),
-  };
-}
+  // front frame outline
+  ctx.strokeStyle = 'rgba(20,30,40,0.18)';
+  ctx.lineWidth = 16;
+  ctx.beginPath();
+  ctx.moveTo(left, bottom);
+  ctx.lineTo(left, top);
+  ctx.lineTo(right, top);
+  ctx.lineTo(right, bottom);
+  ctx.stroke();
 
-function quadPoint(a, b, c, d, u, v) {
-  return lerpPoint(lerpPoint(a, b, u), lerpPoint(d, c, u), v);
+  // front frame main white
+  const frameGrad = ctx.createLinearGradient(left, top, right, bottom);
+  frameGrad.addColorStop(0, '#f3f8fc');
+  frameGrad.addColorStop(0.45, '#ffffff');
+  frameGrad.addColorStop(1, '#d9e2ea');
+  ctx.strokeStyle = frameGrad;
+  ctx.lineWidth = 11;
+  ctx.beginPath();
+  ctx.moveTo(left, bottom);
+  ctx.lineTo(left, top);
+  ctx.lineTo(right, top);
+  ctx.lineTo(right, bottom);
+  ctx.stroke();
+
+  // glossy highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(left + 3, top + 4);
+  ctx.lineTo(right - 3, top + 4);
+  ctx.moveTo(left + 3, top + 5);
+  ctx.lineTo(left + 3, bottom - 5);
+  ctx.moveTo(right - 3, top + 5);
+  ctx.lineTo(right - 3, bottom - 5);
+  ctx.stroke();
+
+  ctx.restore();
 }
 
 function drawScoreboard() {
@@ -1153,14 +1156,264 @@ function drawCanvasCrest(team, x, y, radius) {
 
 function drawPlayer() {
   const team = selectedTeam;
-  drawFootballer(PLAYER_POS.x, PLAYER_POS.y, team.primary, team.secondary, 0.88);
+  const activeShot = game.shot && game.shot.shooter === 'player' ? game.shot : null;
+
+  if (activeShot && (game.mode === 'playerShot' || game.mode === 'resultPause')) {
+    drawKickingFootballer(PLAYER_POS.x, PLAYER_POS.y, team.primary, team.secondary, 0.88, activeShot);
+  } else {
+    drawFootballer(PLAYER_POS.x, PLAYER_POS.y, team.primary, team.secondary, 0.88);
+  }
 }
 
 function drawGoalkeeper() {
   const color = '#c9ff11';
-  drawGoalkeeperFigure(game.keeper.x, game.keeper.y, color, game.keeper.lean, 0.94);
+  const activeShot = game.shot && (game.mode === 'playerShot' || game.mode === 'opponentShot' || game.mode === 'resultPause') ? game.shot : null;
+  const dx = game.keeper.x - KEEPER_HOME.x;
+  const dy = game.keeper.y - KEEPER_HOME.y;
+
+  let visualSide = Math.abs(dx) > 10 ? Math.sign(dx) : 0;
+  let flightT = 0;
+  let anticipation = 0;
+  let visualDive = clamp(Math.hypot(dx, dy) / 145, 0, 1);
+
+  if (activeShot) {
+    const kickDelay = activeShot.kickDelay || 0;
+    const flightTime = Math.max(0, activeShot.time - kickDelay);
+    flightT = clamp(flightTime / activeShot.duration, 0, 1);
+
+    const targetDx = activeShot.keeperTarget.x - KEEPER_HOME.x;
+    const targetDy = activeShot.keeperTarget.y - KEEPER_HOME.y;
+    if (Math.abs(targetDx) > 10) visualSide = Math.sign(targetDx);
+
+    const targetDive = clamp(Math.hypot(targetDx, targetDy) / 150, 0, 1);
+    const visualDiveTiming = smoothstep(0.30, 0.92, flightT);
+    visualDive = Math.max(visualDive, targetDive * visualDiveTiming);
+
+    // Small pre-jump crouch before the keeper launches. It makes the save feel less robotic.
+    anticipation = flightT > 0 && flightT < 0.38 ? Math.sin((flightT / 0.38) * Math.PI) * 0.75 : 0;
+  }
+
+  drawGoalkeeperFigure(game.keeper.x, game.keeper.y, color, game.keeper.lean, 0.94, visualDive, visualSide, anticipation, flightT);
 }
 
+
+function drawKickingFootballer(x, y, primary, secondary, scale = 1, shot) {
+  const kickDelay = shot.kickDelay || 0.58;
+  const runT = clamp(shot.time / kickDelay, 0, 1);
+  const kickT = clamp((shot.time - kickDelay) / 0.36, 0, 1);
+  const followT = clamp((shot.time - kickDelay - 0.20) / 0.64, 0, 1);
+  const runEase = easeOutCubic(runT);
+  const strikeEase = easeInOutCubic(kickT);
+  const followEase = easeOutCubic(followT);
+  const directionLean = clamp((shot.direction - 0.5) * 2, -1, 1);
+
+  // Run-up: the body comes from behind the penalty spot and bounces like short football steps.
+  const step = Math.sin(runT * Math.PI * 4);
+  const runOffsetX = -64 * (1 - runEase);
+  const runOffsetY = 34 * (1 - runEase) + Math.abs(step) * 3.5 * (1 - kickT);
+  const hipTwist = step * 0.08 * (1 - kickT);
+  const bodyLean = directionLean * 0.13 * strikeEase - 0.18 * strikeEase + 0.05 * Math.sin(runT * Math.PI) + hipTwist;
+  const impactPulse = Math.exp(-Math.pow((shot.time - kickDelay) / 0.055, 2));
+
+  ctx.save();
+  ctx.translate(x + runOffsetX, y + runOffsetY);
+  ctx.scale(scale, scale);
+
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const skin = '#d7a77a';
+  const dark = '#101820';
+  const socks = '#f2f6ff';
+
+  // Shadow stretches during follow-through.
+  ctx.fillStyle = 'rgba(0,0,0,.30)';
+  ctx.beginPath();
+  ctx.ellipse(12 + 22 * strikeEase, 55, 42 + 18 * strikeEase, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.rotate(bodyLean);
+
+  // Dynamic skeleton points. Left leg plants, right leg swings through the ball.
+  const hipL = { x: -15, y: 10 };
+  const hipR = { x: 15, y: 10 };
+  const plantKnee = { x: -18 - 8 * strikeEase, y: 31 + 3 * Math.abs(step) * (1 - kickT) };
+  const plantFoot = { x: -24 - 2 * directionLean, y: 52 };
+
+  // The kicking foot starts behind, reaches the ball at impact, then follows through upward.
+  const backswing = Math.sin(runT * Math.PI) * (1 - kickT);
+  const swingKnee = {
+    x: 16 + 10 * strikeEase + 4 * directionLean * strikeEase,
+    y: 25 - 20 * strikeEase + 5 * followEase,
+  };
+  const swingFoot = {
+    x: -32 * (1 - strikeEase) + 70 * strikeEase - 12 * followEase + 15 * directionLean * strikeEase,
+    y: 49 - 62 * strikeEase + 25 * followEase + 8 * backswing,
+  };
+
+  // Back leg silhouette behind the body for extra depth.
+  ctx.strokeStyle = 'rgba(0,0,0,.18)';
+  ctx.lineWidth = 15;
+  ctx.beginPath();
+  ctx.moveTo(hipR.x + 2, hipR.y + 1);
+  ctx.lineTo(swingKnee.x + 3, swingKnee.y + 2);
+  ctx.lineTo(swingFoot.x + 3, swingFoot.y + 2);
+  ctx.stroke();
+
+  // Shorts first so legs look connected.
+  ctx.fillStyle = secondary;
+  roundRect(ctx, -25, -2, 50, 25, 7, true, false);
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.fillRect(-3, 2, 6, 20);
+
+  // Legs / socks / boots.
+  ctx.strokeStyle = secondary;
+  ctx.lineWidth = 13;
+  ctx.beginPath();
+  ctx.moveTo(hipL.x, hipL.y);
+  ctx.lineTo(plantKnee.x, plantKnee.y);
+  ctx.lineTo(plantFoot.x, plantFoot.y);
+  ctx.moveTo(hipR.x, hipR.y);
+  ctx.lineTo(swingKnee.x, swingKnee.y);
+  ctx.lineTo(swingFoot.x, swingFoot.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = socks;
+  ctx.lineWidth = 10;
+  ctx.beginPath();
+  ctx.moveTo(plantKnee.x, plantKnee.y + 2);
+  ctx.lineTo(plantFoot.x, plantFoot.y - 2);
+  ctx.moveTo(swingKnee.x, swingKnee.y + 2);
+  ctx.lineTo(swingFoot.x, swingFoot.y - 1);
+  ctx.stroke();
+
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(plantFoot.x, plantFoot.y);
+  ctx.lineTo(plantFoot.x - 19, plantFoot.y + 2);
+  ctx.moveTo(swingFoot.x, swingFoot.y);
+  ctx.lineTo(swingFoot.x + 21 + 5 * impactPulse, swingFoot.y - 1);
+  ctx.stroke();
+
+  // Torso.
+  const torsoTop = -52;
+  ctx.fillStyle = primary;
+  ctx.beginPath();
+  ctx.moveTo(-31, torsoTop);
+  ctx.lineTo(31, torsoTop);
+  ctx.lineTo(24, -4);
+  ctx.quadraticCurveTo(0, 8, -24, -4);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(255,255,255,.18)';
+  ctx.beginPath();
+  ctx.moveTo(-28, -50);
+  ctx.lineTo(28, -50);
+  ctx.lineTo(23, -40);
+  ctx.lineTo(-23, -40);
+  ctx.closePath();
+  ctx.fill();
+
+  // Shirt stripes.
+  ctx.fillStyle = secondary;
+  for (let sx = -18; sx <= 18; sx += 18) {
+    ctx.beginPath();
+    ctx.moveTo(sx - 4, -48);
+    ctx.lineTo(sx + 4, -48);
+    ctx.lineTo(sx + 2, -5);
+    ctx.lineTo(sx - 2, -5);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.fillStyle = 'rgba(255,255,255,.72)';
+  roundRect(ctx, -9, -36, 18, 19, 4, true, false);
+  ctx.fillStyle = primary;
+  ctx.font = '900 13px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('9', 0, -26);
+
+  // Arms counterbalance the kick.
+  const leftArm = {
+    elbowX: -43 - 15 * strikeEase + 6 * step * (1 - kickT),
+    elbowY: -19 + 10 * strikeEase,
+    handX: -39 - 15 * strikeEase,
+    handY: 0 + 6 * strikeEase,
+  };
+  const rightArm = {
+    elbowX: 43 - 8 * strikeEase - 4 * step * (1 - kickT),
+    elbowY: -18 - 11 * strikeEase,
+    handX: 49 - 11 * strikeEase,
+    handY: -2 - 12 * strikeEase,
+  };
+
+  ctx.strokeStyle = primary;
+  ctx.lineWidth = 13;
+  ctx.beginPath();
+  ctx.moveTo(-27, -42);
+  ctx.lineTo(leftArm.elbowX, leftArm.elbowY);
+  ctx.moveTo(27, -42);
+  ctx.lineTo(rightArm.elbowX, rightArm.elbowY);
+  ctx.stroke();
+
+  ctx.strokeStyle = skin;
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(leftArm.elbowX, leftArm.elbowY);
+  ctx.lineTo(leftArm.handX, leftArm.handY);
+  ctx.moveTo(rightArm.elbowX, rightArm.elbowY);
+  ctx.lineTo(rightArm.handX, rightArm.handY);
+  ctx.stroke();
+
+  ctx.fillStyle = skin;
+  ctx.beginPath();
+  ctx.arc(leftArm.handX, leftArm.handY + 2, 5, 0, Math.PI * 2);
+  ctx.arc(rightArm.handX, rightArm.handY, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Neck and head lean forward at impact.
+  ctx.save();
+  ctx.translate(4 * strikeEase, -1 * strikeEase);
+  ctx.rotate(-0.08 * strikeEase);
+  ctx.fillStyle = skin;
+  roundRect(ctx, -7, -67, 14, 15, 5, true, false);
+  ctx.fillStyle = '#c79263';
+  ctx.beginPath();
+  ctx.arc(0, -74, 17, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#151515';
+  ctx.beginPath();
+  ctx.arc(0, -80, 18, Math.PI * 0.95, Math.PI * 2.05);
+  ctx.fill();
+  ctx.fillRect(-15, -78, 30, 12);
+  ctx.restore();
+
+  // Swing trail and contact flash make the kick easier to read.
+  if (kickT > 0.03 && kickT < 0.92) {
+    ctx.strokeStyle = 'rgba(255,255,255,.40)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(34, 18, 39, -1.28, 0.35);
+    ctx.stroke();
+  }
+  if (impactPulse > 0.12) {
+    ctx.strokeStyle = `rgba(255,255,255,${0.48 * impactPulse})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(70, 15);
+    ctx.lineTo(88, 4);
+    ctx.moveTo(72, 22);
+    ctx.lineTo(94, 21);
+    ctx.moveTo(68, 29);
+    ctx.lineTo(86, 40);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
 function drawFootballer(x, y, primary, secondary, scale = 1) {
   ctx.save();
   ctx.translate(x, y);
@@ -1298,101 +1551,196 @@ function drawFootballer(x, y, primary, secondary, scale = 1) {
   ctx.restore();
 }
 
-function drawGoalkeeperFigure(x, y, color, lean, scale = 1) {
+
+function drawGoalkeeperFigure(x, y, color, lean, scale = 1, diveAmount = 0, diveSide = 0, anticipation = 0, flightT = 0) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(scale, scale);
-  ctx.rotate(lean * 0.18);
 
-  ctx.fillStyle = 'rgba(0,0,0,.24)';
+  const side = diveSide || (Math.abs(lean) > 0.08 ? Math.sign(lean) : 0);
+  const dive = clamp(diveAmount, 0, 1);
+  const absLean = clamp(Math.abs(lean), 0, 1.25);
+  const stretch = Math.max(dive, absLean * 0.72);
+  const lead = side === 0 ? 1 : side;
+  const crouch = clamp(anticipation, 0, 1);
+  const launch = smoothstep(0.28, 0.88, flightT) * stretch;
+  const verticalStretch = clamp((KEEPER_HOME.y - y) / 120, -0.45, 0.85);
+  const bodyAngle = lead * (0.12 * crouch + 0.98 * launch);
+
+  const glove = '#f8fbff';
+  const dark = '#101820';
+  const skin = '#d7a77a';
+  const shorts = '#111820';
+
+  // Ground shadow stays horizontal and stretches when the keeper dives.
+  ctx.fillStyle = 'rgba(0,0,0,.28)';
   ctx.beginPath();
-  ctx.ellipse(0, 62, 48, 12, 0, 0, Math.PI * 2);
+  ctx.ellipse(lead * 20 * launch, 62 + launch * 9 + crouch * 5, 48 + launch * 38, 12 - launch * 3, 0, 0, Math.PI * 2);
   ctx.fill();
 
+  // Anticipation crouch before jump.
+  ctx.translate(0, crouch * 10);
+  ctx.rotate(bodyAngle);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  const dive = lean * 18;
-  const glove = '#f8fbff';
-  const dark = '#101820';
+  const torsoTopY = -38 + crouch * 6;
+  const torsoBottomY = 14 + crouch * 7;
+  const shoulderY = -28 + crouch * 5;
+  const hipY = 10 + crouch * 7;
+  const headY = -64 + crouch * 5;
 
-  ctx.strokeStyle = dark;
-  ctx.lineWidth = 7;
-  ctx.beginPath();
-  ctx.moveTo(-18, 45);
-  ctx.lineTo(-36, 53);
-  ctx.moveTo(18, 45);
-  ctx.lineTo(36, 53);
-  ctx.stroke();
+  const reach = 62 + 48 * launch + 14 * verticalStretch;
+  const leadHand = {
+    x: lead * reach,
+    y: -17 - 43 * launch - verticalStretch * 18 + crouch * 5,
+  };
+  const trailHand = {
+    x: -lead * (42 + 12 * launch),
+    y: -4 + 24 * launch + crouch * 7,
+  };
 
-  ctx.strokeStyle = '#f2f6ff';
-  ctx.lineWidth = 12;
-  ctx.beginPath();
-  ctx.moveTo(-17, 17);
-  ctx.lineTo(-24, 46);
-  ctx.moveTo(17, 17);
-  ctx.lineTo(24, 46);
-  ctx.stroke();
-
-  ctx.fillStyle = dark;
-  roundRect(ctx, -24, 2, 48, 24, 7, true, false);
-
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(-32, -36);
-  ctx.lineTo(32, -36);
-  ctx.lineTo(27, 10);
-  ctx.quadraticCurveTo(0, 21, -27, 10);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.fillStyle = 'rgba(255,255,255,.22)';
-  ctx.fillRect(-23, -31, 46, 8);
-  ctx.fillStyle = 'rgba(0,0,0,.16)';
-  ctx.fillRect(-3, -34, 6, 48);
+  // Arms with a two-segment reach. Lead arm stretches toward the shot, trail arm balances.
+  const leadShoulder = { x: lead * 24, y: shoulderY };
+  const trailShoulder = { x: -lead * 24, y: shoulderY };
+  const leadElbow = {
+    x: lead * (44 + 25 * launch),
+    y: -24 - 28 * launch - verticalStretch * 10,
+  };
+  const trailElbow = {
+    x: -lead * (35 + 8 * launch),
+    y: -12 + 18 * launch,
+  };
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 13;
   ctx.beginPath();
-  ctx.moveTo(-27, -26);
-  ctx.lineTo(-51 - dive, -10);
-  ctx.moveTo(27, -26);
-  ctx.lineTo(51 - dive, -10);
+  ctx.moveTo(leadShoulder.x, leadShoulder.y);
+  ctx.lineTo(leadElbow.x, leadElbow.y);
+  ctx.lineTo(leadHand.x, leadHand.y);
+  ctx.moveTo(trailShoulder.x, trailShoulder.y);
+  ctx.lineTo(trailElbow.x, trailElbow.y);
+  ctx.lineTo(trailHand.x, trailHand.y);
   ctx.stroke();
 
-  ctx.strokeStyle = '#d7a77a';
+  ctx.strokeStyle = skin;
   ctx.lineWidth = 8;
   ctx.beginPath();
-  ctx.moveTo(-50 - dive, -10);
-  ctx.lineTo(-62 - dive, 4);
-  ctx.moveTo(50 - dive, -10);
-  ctx.lineTo(62 - dive, 4);
+  ctx.moveTo(leadElbow.x, leadElbow.y);
+  ctx.lineTo(leadHand.x, leadHand.y);
+  ctx.moveTo(trailElbow.x, trailElbow.y);
+  ctx.lineTo(trailHand.x, trailHand.y);
   ctx.stroke();
 
+  // Gloves.
   ctx.fillStyle = glove;
-  ctx.beginPath();
-  ctx.ellipse(-65 - dive, 6, 10, 13, -0.35, 0, Math.PI * 2);
-  ctx.ellipse(65 - dive, 6, 10, 13, 0.35, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(16,24,32,.35)';
+  ctx.strokeStyle = 'rgba(16,24,32,.38)';
   ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(leadHand.x, leadHand.y, 13 + 5 * launch, 16, lead * 0.22, 0, Math.PI * 2);
+  ctx.ellipse(trailHand.x, trailHand.y, 10, 13, -lead * 0.20, 0, Math.PI * 2);
+  ctx.fill();
   ctx.stroke();
 
-  ctx.fillStyle = '#d7a77a';
-  roundRect(ctx, -8, -51, 16, 14, 5, true, false);
+  // Legs: crouched when anticipating, stretched/scissored when diving.
+  const leadLegKnee = { x: -lead * (10 + 15 * launch), y: 30 + crouch * 8 + 6 * launch };
+  const leadFoot = { x: -lead * (34 + 26 * launch), y: 53 + 16 * launch };
+  const trailLegKnee = { x: lead * (16 + 18 * launch), y: 31 - 4 * launch + crouch * 6 };
+  const trailFoot = { x: lead * (31 + 34 * launch), y: 48 - 12 * launch };
+
+  ctx.strokeStyle = '#f2f6ff';
+  ctx.lineWidth = 12;
   ctx.beginPath();
-  ctx.arc(0, -62, 18, 0, Math.PI * 2);
+  ctx.moveTo(-16, hipY + 8);
+  ctx.lineTo(lead < 0 ? trailLegKnee.x : leadLegKnee.x, lead < 0 ? trailLegKnee.y : leadLegKnee.y);
+  ctx.lineTo(lead < 0 ? trailFoot.x : leadFoot.x, lead < 0 ? trailFoot.y : leadFoot.y);
+  ctx.moveTo(16, hipY + 8);
+  ctx.lineTo(lead > 0 ? trailLegKnee.x : leadLegKnee.x, lead > 0 ? trailLegKnee.y : leadLegKnee.y);
+  ctx.lineTo(lead > 0 ? trailFoot.x : leadFoot.x, lead > 0 ? trailFoot.y : leadFoot.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = dark;
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(leadFoot.x, leadFoot.y);
+  ctx.lineTo(leadFoot.x + lead * 18, leadFoot.y + 5);
+  ctx.moveTo(trailFoot.x, trailFoot.y);
+  ctx.lineTo(trailFoot.x + lead * 19, trailFoot.y + 3);
+  ctx.stroke();
+
+  // Shorts.
+  ctx.fillStyle = shorts;
+  roundRect(ctx, -24, 1 + crouch * 2, 48, 24, 7, true, false);
+
+  // Jersey.
+  const jerseyGrad = ctx.createLinearGradient(0, torsoTopY, 0, torsoBottomY);
+  jerseyGrad.addColorStop(0, '#e4ff42');
+  jerseyGrad.addColorStop(0.45, color);
+  jerseyGrad.addColorStop(1, '#87bd00');
+  ctx.fillStyle = jerseyGrad;
+  ctx.beginPath();
+  ctx.moveTo(-33, torsoTopY);
+  ctx.lineTo(33, torsoTopY);
+  ctx.lineTo(27, torsoBottomY);
+  ctx.quadraticCurveTo(0, torsoBottomY + 12, -27, torsoBottomY);
+  ctx.closePath();
   ctx.fill();
 
+  ctx.fillStyle = 'rgba(255,255,255,.25)';
+  ctx.fillRect(-23, torsoTopY + 6, 46, 8);
+  ctx.fillStyle = 'rgba(0,0,0,.15)';
+  ctx.fillRect(-3, torsoTopY + 2, 6, 45);
+
+  // Collar.
+  ctx.fillStyle = '#f8fbff';
+  ctx.beginPath();
+  ctx.moveTo(-11, torsoTopY + 1);
+  ctx.lineTo(0, torsoTopY + 12);
+  ctx.lineTo(11, torsoTopY + 1);
+  ctx.closePath();
+  ctx.fill();
+
+  // Head tracks the dive direction a bit.
+  ctx.save();
+  ctx.translate(lead * 4 * launch, -2 * launch);
+  ctx.rotate(lead * 0.10 * launch);
+  ctx.fillStyle = skin;
+  roundRect(ctx, -8, -51 + crouch * 2, 16, 14, 5, true, false);
+  ctx.beginPath();
+  ctx.arc(0, headY, 18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,.75)';
+  ctx.beginPath();
+  ctx.arc(-6, headY - 1, 1.8, 0, Math.PI * 2);
+  ctx.arc(6, headY - 1, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.55)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-5, headY + 8);
+  ctx.quadraticCurveTo(0, headY + 11, 5, headY + 8);
+  ctx.stroke();
   ctx.fillStyle = '#151515';
   ctx.beginPath();
-  ctx.arc(0, -68, 18, Math.PI * 0.95, Math.PI * 2.05);
+  ctx.arc(0, headY - 6, 18, Math.PI * 0.95, Math.PI * 2.05);
   ctx.fill();
-  ctx.fillRect(-15, -66, 30, 10);
+  ctx.fillRect(-15, headY - 4, 30, 9);
+  ctx.restore();
+
+  // Motion streak near the lead glove during a big dive.
+  if (launch > 0.35) {
+    ctx.strokeStyle = `rgba(255,255,255,${0.22 * launch})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(leadHand.x - lead * 14, leadHand.y + 10);
+    ctx.lineTo(leadHand.x - lead * 44, leadHand.y + 18);
+    ctx.moveTo(leadHand.x - lead * 8, leadHand.y - 4);
+    ctx.lineTo(leadHand.x - lead * 38, leadHand.y - 3);
+    ctx.stroke();
+  }
 
   ctx.restore();
 }
-
 function drawBall(x, y, radius, rotation) {
   ctx.save();
   ctx.translate(x, y);
@@ -1597,6 +1945,12 @@ function roundRect(context, x, y, width, height, radius, fill, stroke) {
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+
+function smoothstep(edge0, edge1, value) {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function clamp(value, min, max) {
