@@ -182,7 +182,9 @@ const game = {
   playerGoals: 0,
   opponentGoals: 0,
   playerPoints: 0,
-  opponentPoints: 0,
+  tournamentWins: 0,
+  lastMatchWon: false,
+  matchAwarded: false,
   playerHistory: [],
   opponentHistory: [],
   activeControl: 'direction',
@@ -316,7 +318,10 @@ function selectTeam(team) {
 }
 
 function chooseOpponent() {
-  const candidates = TEAMS.filter((team) => team.id !== selectedTeam.id);
+  let candidates = TEAMS.filter((team) => team.id !== selectedTeam.id && team.id !== opponentTeam?.id);
+  if (candidates.length === 0) {
+    candidates = TEAMS.filter((team) => team.id !== selectedTeam.id);
+  }
   opponentTeam = candidates[Math.floor(Math.random() * candidates.length)];
 }
 
@@ -344,15 +349,21 @@ function preparePreview() {
   showScreen('preview');
 }
 
-function resetGame() {
+function resetGame(options = {}) {
+  const { newTournament = false } = options;
+  if (newTournament) {
+    game.tournamentWins = 0;
+    game.playerPoints = 0;
+    game.lastMatchWon = false;
+    game.matchAwarded = false;
+  }
   game.mode = 'playerAim';
   game.phaseMessage = 'Select shot direction';
   game.round = 1;
   game.suddenDeath = false;
   game.playerGoals = 0;
   game.opponentGoals = 0;
-  game.playerPoints = 0;
-  game.opponentPoints = 0;
+  game.matchAwarded = false;
   game.playerHistory = [];
   game.opponentHistory = [];
   resetShotControls();
@@ -393,13 +404,33 @@ function resetOpponentHint() {
   };
 }
 
-function startGame() {
-  resetGame();
+function tournamentDifficultyLevel() {
+  return Math.max(0, game.tournamentWins);
+}
+
+function shouldShowOpponentHint() {
+  // The save hint is visible only for the first two won matches.
+  // After winning match 2, the next opponents shoot without showing the target hint.
+  return game.tournamentWins < 2;
+}
+
+function currentMatchLabel() {
+  return `Match ${game.tournamentWins + 1}`;
+}
+
+
+function startGame(options = {}) {
+  resetGame(options);
   showScreen('game');
   audioManager.playCrowd();
   lastTime = performance.now();
   cancelAnimationFrame(animationId);
   animationId = requestAnimationFrame(loop);
+}
+
+function startNextMatch() {
+  chooseOpponent();
+  startGame({ newTournament: false });
 }
 
 function playTone(type = 'click') {
@@ -491,8 +522,8 @@ function updateOpponentHint(dt) {
 }
 
 function currentDifficulty() {
-  const baseRound = Math.max(1, game.round);
-  return Math.min(2.4, 0.72 + (baseRound - 1) * 0.16 + (game.suddenDeath ? 0.18 : 0));
+  // Difficulty is fixed during a match and increases only after winning matches.
+  return Math.min(2.35, 0.72 + tournamentDifficultyLevel() * 0.18);
 }
 
 function updateControlMarkers(dt) {
@@ -686,17 +717,19 @@ function finishShot() {
     game.opponentHistory.push(result.goal);
     if (result.goal) {
       game.opponentGoals += 1;
-      game.opponentPoints += 100;
       playTone('goal');
     } else {
+      if (result.saved) {
+        game.playerPoints += 50;
+      }
       playTone(result.saved ? 'save' : 'miss');
     }
   }
 
   game.mode = 'resultPause';
   game.phaseMessage = result.label;
-  // Saves and frame hits need a little more time so the rebound can be seen clearly.
-  game.resultTimer = (result.saved || result.frameHit) ? 2.05 : 1.45;
+  // Saves, frame hits, and goals need a little more time so rebound/net animation can be seen clearly.
+  game.resultTimer = (result.saved || result.frameHit) ? 2.05 : (result.goal ? 1.85 : 1.45);
 }
 
 
@@ -792,11 +825,22 @@ function initializeFrameRebound(shot, result) {
 }
 
 function initializeNetRipple(shot) {
+  const impactX = clamp(shot.target.x, GOAL.x + 28, GOAL.x + GOAL.w - 28);
+  const impactY = clamp(shot.target.y, GOAL.y + 28, GOAL.y + GOAL.h - 28);
+  const side = clamp((impactX - (GOAL.x + GOAL.w / 2)) / (GOAL.w / 2), -1, 1);
+  const heightFactor = clamp((GOAL.y + GOAL.h - impactY) / GOAL.h, 0, 1);
+
   game.netRipple = {
-    x: clamp(shot.target.x, GOAL.x + 28, GOAL.x + GOAL.w - 28),
-    y: clamp(shot.target.y, GOAL.y + 28, GOAL.y + GOAL.h - 28),
+    x: impactX,
+    y: impactY,
+    side,
+    heightFactor,
+    power: clamp(shot.power, 0, 1),
     time: 0,
-    duration: 0.65,
+    duration: 1.18,
+    strength: lerp(18, 44, clamp(shot.power, 0, 1)) + (shot.isPanenka ? 12 : 0),
+    radiusX: lerp(72, 118, clamp(shot.power, 0, 1)),
+    radiusY: lerp(48, 88, heightFactor),
   };
 }
 
@@ -835,11 +879,35 @@ function evaluateShot(shot) {
   return { goal: true, saved: false, label: 'GOAL!' };
 }
 
+
+function shouldEndRegularShootout() {
+  if (game.suddenDeath) return false;
+
+  const playerTaken = game.playerHistory.length;
+  const opponentTaken = game.opponentHistory.length;
+  const playerRemaining = Math.max(0, 5 - playerTaken);
+  const opponentRemaining = Math.max(0, 5 - opponentTaken);
+
+  // Real penalty shootout rule:
+  // If the trailing side can no longer catch the leader with the remaining kicks,
+  // the match ends immediately instead of forcing all five kicks.
+  if (game.playerGoals > game.opponentGoals + opponentRemaining) return true;
+  if (game.opponentGoals > game.playerGoals + playerRemaining) return true;
+
+  return false;
+}
+
 function advanceAfterResult() {
   game.shot = null;
   resetKeeper();
 
   if (game.mode !== 'resultPause') return;
+
+  // End the match early when the result is mathematically decided.
+  if (shouldEndRegularShootout()) {
+    showFinal();
+    return;
+  }
 
   const lastWasPlayer = game.playerHistory.length > game.opponentHistory.length;
   if (lastWasPlayer) {
@@ -879,8 +947,13 @@ function startPlayerAim() {
 function startGoalkeeperPick() {
   game.mode = 'goalkeeperPick';
   prepareOpponentShotBeforeKeeperClick();
-  game.phaseMessage = 'Watch the glove hint, then choose your save spot!';
-  canvasHint.textContent = 'Watch the glove hint, then click inside the goal to dive.';
+  if (shouldShowOpponentHint()) {
+    game.phaseMessage = 'Watch the glove hint, then choose your save spot!';
+    canvasHint.textContent = 'Watch the glove hint, then click inside the goal to dive.';
+  } else {
+    game.phaseMessage = 'Defend! Choose your save spot!';
+    canvasHint.textContent = 'No hint now. Click inside the goal to dive.';
+  }
 }
 
 function lockActiveControl() {
@@ -937,7 +1010,8 @@ function startPlayerShotAfterWhistle() {
 }
 
 function chooseKeeperTargetAgainstPlayer(shot) {
-  const difficulty = Math.min(0.78, 0.25 + (game.round - 1) * 0.09 + (game.suddenDeath ? 0.10 : 0));
+  // CPU goalkeeper difficulty stays constant inside the match, then increases after each match win.
+  const difficulty = Math.min(0.82, 0.25 + tournamentDifficultyLevel() * 0.10);
   const readsShot = Math.random() < difficulty;
 
   if (readsShot && shot.inGoal) {
@@ -1004,26 +1078,41 @@ function prepareOpponentShotBeforeKeeperClick() {
 }
 
 function getOpponentHintDuration() {
-  if (game.suddenDeath) return 0.28;
+  if (!shouldShowOpponentHint()) return 0;
 
-  const durations = [0.78, 0.63, 0.52, 0.42, 0.35];
-  const attemptIndex = Math.min(game.opponentHistory.length, durations.length - 1);
-  return Math.max(0.25, durations[attemptIndex]);
+  // Hint duration also stays fixed inside a match. It only gets shorter after match wins.
+  const durations = [0.78, 0.58];
+  const level = Math.min(tournamentDifficultyLevel(), durations.length - 1);
+  return durations[level];
 }
 
 function startOpponentShotHint(target) {
+  const duration = getOpponentHintDuration();
+  if (duration <= 0) {
+    game.opponentHint = {
+      active: false,
+      x: 0,
+      y: 0,
+      elapsed: 0,
+      duration: 0,
+      alpha: 0,
+    };
+    return;
+  }
+
   game.opponentHint = {
     active: true,
     x: clamp(target.x, GOAL.x + 34, GOAL.x + GOAL.w - 34),
     y: clamp(target.y, GOAL.y + 34, GOAL.y + GOAL.h - 34),
     elapsed: 0,
-    duration: getOpponentHintDuration(),
+    duration,
     alpha: 1,
   };
 }
 
 function generateOpponentShotValues() {
-  const accuracy = Math.min(0.83, 0.53 + (game.round - 1) * 0.045 + (game.suddenDeath ? 0.08 : 0));
+  // Opponent accuracy is fixed during the match and increases only after match wins.
+  const accuracy = Math.min(0.86, 0.53 + tournamentDifficultyLevel() * 0.055);
   let direction;
   let height;
   let power;
@@ -1169,23 +1258,38 @@ function showFinal() {
   const summary = document.getElementById('finalSummary');
   const playerScore = document.getElementById('finalPlayerScore');
   const opponentScore = document.getElementById('finalOpponentScore');
+  const actionButton = document.getElementById('playAgainBtn');
+
+  const playerWonMatch = game.playerGoals > game.opponentGoals;
+  game.lastMatchWon = playerWonMatch;
+
+  if (playerWonMatch && !game.matchAwarded) {
+    game.tournamentWins += 1;
+    game.playerPoints += 500;
+    game.matchAwarded = true;
+  }
 
   fillLogoSlot('finalPlayerLogo', selectedTeam, 'small-crest');
   fillLogoSlot('finalOpponentLogo', opponentTeam, 'small-crest');
-  document.getElementById('finalPlayerName').textContent = selectedTeam.name;
-  document.getElementById('finalOpponentName').textContent = opponentTeam.name;
-  playerScore.textContent = game.playerPoints;
-  opponentScore.textContent = game.opponentPoints;
 
-  if (game.playerPoints > game.opponentPoints) {
-    title.textContent = 'You Won!';
-    summary.textContent = `${selectedTeam.name} wins the shootout ${game.playerGoals}-${game.opponentGoals}.`;
-  } else if (game.playerPoints < game.opponentPoints) {
-    title.textContent = 'You Lost!';
-    summary.textContent = `${opponentTeam.name} wins the shootout ${game.opponentGoals}-${game.playerGoals}.`;
+  // Opponent points were removed. The right side now shows only the last match score.
+  document.getElementById('finalPlayerName').textContent = 'Total Points';
+  document.getElementById('finalOpponentName').textContent = 'Match Score';
+  playerScore.textContent = game.playerPoints;
+  opponentScore.textContent = `${game.playerGoals} - ${game.opponentGoals}`;
+
+  if (playerWonMatch) {
+    title.textContent = 'Match Won!';
+    summary.textContent = `${selectedTeam.name} beat ${opponentTeam.name} ${game.playerGoals}-${game.opponentGoals}. +500 match win bonus earned. Total wins: ${game.tournamentWins}. Total points: ${game.playerPoints}. Next match will be harder.`;
+    actionButton.textContent = 'NEXT MATCH';
+  } else if (game.playerGoals < game.opponentGoals) {
+    title.textContent = 'Tournament Over';
+    summary.textContent = `${opponentTeam.name} won ${game.opponentGoals}-${game.playerGoals}. Total wins: ${game.tournamentWins}. Total points: ${game.playerPoints}.`;
+    actionButton.textContent = 'PLAY AGAIN';
   } else {
     title.textContent = 'Draw';
-    summary.textContent = 'The shootout ended level after sudden death.';
+    summary.textContent = `The shootout ended level after sudden death. Total wins: ${game.tournamentWins}. Total points: ${game.playerPoints}.`;
+    actionButton.textContent = 'PLAY AGAIN';
   }
 
   showScreen('final');
@@ -1434,20 +1538,15 @@ function drawGoal() {
   ctx.closePath();
   ctx.fill();
 
-  // dense front net
+  // dense front net. Lines are drawn with many small segments so the net can
+  // deform naturally when the ball hits it.
   ctx.strokeStyle = 'rgba(255,255,255,0.72)';
   ctx.lineWidth = 1;
   for (let x = left + 12; x < right - 8; x += 16) {
-    ctx.beginPath();
-    ctx.moveTo(x, top + 2);
-    ctx.lineTo(x, bottom - 2);
-    ctx.stroke();
+    drawElasticNetLine({ x, y: top + 2 }, { x, y: bottom - 2 }, 18);
   }
   for (let y = top + 12; y < bottom - 4; y += 14) {
-    ctx.beginPath();
-    ctx.moveTo(left + 2, y);
-    ctx.lineTo(right - 2, y);
-    ctx.stroke();
+    drawElasticNetLine({ x: left + 2, y }, { x: right - 2, y }, 28);
   }
 
   // roof net lines
@@ -1546,6 +1645,52 @@ function drawGoal() {
   ctx.restore();
 }
 
+
+function drawElasticNetLine(a, b, segments = 18) {
+  ctx.beginPath();
+  for (let i = 0; i <= segments; i += 1) {
+    const t = i / segments;
+    const base = {
+      x: lerp(a.x, b.x, t),
+      y: lerp(a.y, b.y, t),
+    };
+    const p = applyNetRippleToPoint(base);
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+}
+
+function applyNetRippleToPoint(point) {
+  const ripple = game.netRipple;
+  if (!ripple) return point;
+
+  const life = clamp(ripple.time / ripple.duration, 0, 1);
+  const pullLife = Math.sin(Math.PI * Math.min(1, life * 1.15));
+  const vibration = Math.sin(life * Math.PI * 9) * Math.pow(1 - life, 1.7);
+  const dx = point.x - ripple.x;
+  const dy = point.y - ripple.y;
+  const nx = dx / ripple.radiusX;
+  const ny = dy / ripple.radiusY;
+  const distance = Math.sqrt(nx * nx + ny * ny);
+  const influence = Math.exp(-distance * distance * 1.85);
+  if (influence < 0.012) return point;
+
+  const strength = ripple.strength * influence * (pullLife + vibration * 0.28);
+
+  // A real net is pulled inward at the impact point. In front view, this is shown by
+  // nearby strings bending toward the contact point, then sagging down and shaking.
+  const towardImpactX = -dx * 0.18 * influence * (pullLife + 0.25);
+  const towardImpactY = -dy * 0.12 * influence * (pullLife + 0.20);
+  const sagY = strength * 0.52;
+  const sideWaveX = Math.sin(point.y * 0.085 + life * 16) * influence * 4.5 * (1 - life) * (ripple.side || 0.35);
+
+  return {
+    x: point.x + towardImpactX + sideWaveX,
+    y: point.y + towardImpactY + sagY,
+  };
+}
+
 function drawScoreboard() {
   ctx.save();
   const bar = ctx.createLinearGradient(0, 0, W, 0);
@@ -1560,7 +1705,7 @@ function drawScoreboard() {
   ctx.textAlign = 'left';
   ctx.fillText(`POINTS: ${game.playerPoints}`, 14, 27);
   ctx.textAlign = 'right';
-  ctx.fillText(`${game.suddenDeath ? 'SUDDEN DEATH' : `${Math.min(game.round, 5)} / 5`}`, W - 14, 27);
+  ctx.fillText(`${currentMatchLabel()}  |  WINS: ${game.tournamentWins}  |  ${game.suddenDeath ? 'SUDDEN DEATH' : `${Math.min(game.round, 5)} / 5`}`, W - 14, 27);
 
   drawCanvasCrest(selectedTeam, 275, 21, 32);
   drawCanvasCrest(opponentTeam, 845, 21, 32);
@@ -2283,26 +2428,60 @@ function drawNetRipple() {
   if (!ripple) return;
 
   const t = clamp(ripple.time / ripple.duration, 0, 1);
-  const alpha = (1 - t) * 0.48;
-  const wave = Math.sin(t * Math.PI);
-  const radiusX = lerp(18, 70, t);
-  const radiusY = lerp(10, 34, t);
+  const fade = Math.pow(1 - t, 1.4);
+  const snap = Math.sin(Math.PI * Math.min(1, t * 1.25));
+  const shake = Math.sin(t * Math.PI * 11) * fade;
+  const radiusX = lerp(20, ripple.radiusX * 0.86, easeOutCubic(t));
+  const radiusY = lerp(10, ripple.radiusY * 0.72, easeOutCubic(t));
 
   ctx.save();
-  ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
-  ctx.lineWidth = 2;
+
+  // Soft glow at the exact point where the ball hits the net.
+  const glow = ctx.createRadialGradient(ripple.x, ripple.y, 2, ripple.x, ripple.y, radiusX * 0.72);
+  glow.addColorStop(0, `rgba(255,255,255,${0.24 * fade})`);
+  glow.addColorStop(0.55, `rgba(255,255,255,${0.10 * fade})`);
+  glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.ellipse(ripple.x, ripple.y, radiusX, radiusY + wave * 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(ripple.x, ripple.y + snap * 12, radiusX, radiusY + snap * 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Expanding wave rings on the net.
+  ctx.strokeStyle = `rgba(255,255,255,${0.58 * fade})`;
+  ctx.lineWidth = lerp(3.2, 1, t);
+  ctx.beginPath();
+  ctx.ellipse(ripple.x, ripple.y + snap * 12 + shake * 6, radiusX, radiusY + snap * 12, 0, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.strokeStyle = `rgba(255,210,31,${alpha * 0.55})`;
+  ctx.strokeStyle = `rgba(255,220,80,${0.24 * fade})`;
   ctx.lineWidth = 1.5;
-  for (let i = -2; i <= 2; i += 1) {
+  ctx.beginPath();
+  ctx.ellipse(ripple.x, ripple.y + snap * 10, radiusX * 0.62, radiusY * 0.55, 0, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Extra vibrating strings around the hit point, making the net feel elastic.
+  ctx.strokeStyle = `rgba(255,255,255,${0.42 * fade})`;
+  ctx.lineWidth = 1.4;
+  for (let i = -4; i <= 4; i += 1) {
+    const y = ripple.y + i * 12;
+    const local = Math.exp(-(i * i) / 9);
+    const bend = snap * 24 * local + shake * 7 * local;
     ctx.beginPath();
-    ctx.moveTo(ripple.x - radiusX * 0.65, ripple.y + i * 9 + wave * 5);
-    ctx.quadraticCurveTo(ripple.x, ripple.y + i * 9 - wave * 10, ripple.x + radiusX * 0.65, ripple.y + i * 9 + wave * 5);
+    ctx.moveTo(ripple.x - radiusX * 0.62, y);
+    ctx.quadraticCurveTo(ripple.x, y + bend, ripple.x + radiusX * 0.62, y);
     ctx.stroke();
   }
+
+  for (let i = -3; i <= 3; i += 1) {
+    const x = ripple.x + i * 18;
+    const local = Math.exp(-(i * i) / 7);
+    const bend = snap * 18 * local + shake * 5 * local;
+    ctx.beginPath();
+    ctx.moveTo(x, ripple.y - radiusY * 0.62);
+    ctx.quadraticCurveTo(x + bend * 0.35 * (ripple.side || 1), ripple.y, x, ripple.y + radiusY * 0.68 + bend);
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -2417,7 +2596,10 @@ function drawGoalClickOverlay() {
   ctx.fillStyle = '#fff';
   ctx.font = '900 22px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText(game.opponentHint.active ? 'WATCH THE GLOVE HINT' : 'CLICK A DIVE SPOT', GOAL.x + GOAL.w / 2, GOAL.y - 18);
+  const overlayText = shouldShowOpponentHint()
+    ? (game.opponentHint.active ? 'WATCH THE GLOVE HINT' : 'CLICK A DIVE SPOT')
+    : 'NO HINT - PICK A DIVE SPOT';
+  ctx.fillText(overlayText, GOAL.x + GOAL.w / 2, GOAL.y - 18);
   ctx.restore();
 }
 
@@ -2673,12 +2855,17 @@ function setupEvents() {
   document.getElementById('startMatchBtn').addEventListener('click', () => {
     audioManager.unlock();
     playTone('click');
-    startGame();
+    startGame({ newTournament: true });
   });
   document.getElementById('playAgainBtn').addEventListener('click', () => {
     audioManager.unlock();
-    chooseOpponent();
-    startGame();
+    playTone('click');
+    if (game.lastMatchWon) {
+      startNextMatch();
+    } else {
+      chooseOpponent();
+      startGame({ newTournament: true });
+    }
   });
   document.getElementById('menuAgainBtn').addEventListener('click', () => showScreen('menu'));
   document.getElementById('soundBtn').addEventListener('click', () => {
