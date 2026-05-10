@@ -140,6 +140,38 @@ const audioManager = {
       // Silent fallback.
     }
   },
+
+  playWhistleBefore(callback) {
+    if (!this.enabled || !this.unlocked || !this.whistle || !this.whistleAvailable) {
+      callback();
+      return;
+    }
+
+    let done = false;
+    let timeoutId = 0;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timeoutId);
+      this.whistle.removeEventListener('ended', finish);
+      callback();
+    };
+
+    try {
+      this.whistle.pause();
+      this.whistle.currentTime = 0;
+      this.whistle.addEventListener('ended', finish, { once: true });
+      timeoutId = window.setTimeout(finish, 1200);
+      const playPromise = this.whistle.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          window.setTimeout(finish, 120);
+        });
+      }
+    } catch (_) {
+      window.setTimeout(finish, 0);
+    }
+  },
 };
 
 const game = {
@@ -170,6 +202,7 @@ const game = {
     power: { t: 0.5, dir: 1 },
   },
   shot: null,
+  waitingForWhistle: false,
   keeper: {
     x: KEEPER_HOME.x,
     y: KEEPER_HOME.y,
@@ -327,6 +360,7 @@ function resetGame() {
   game.frameImpact = null;
   game.netRipple = null;
   game.shot = null;
+  game.waitingForWhistle = false;
   game.keeper = { x: KEEPER_HOME.x, y: KEEPER_HOME.y, tx: KEEPER_HOME.x, ty: KEEPER_HOME.y, lean: 0 };
   game.resultTimer = 0;
   canvasHint.textContent = 'Click the active control or press Space.';
@@ -462,6 +496,8 @@ function currentDifficulty() {
 }
 
 function updateControlMarkers(dt) {
+  if (game.mode !== 'playerAim' || game.waitingForWhistle) return;
+
   const speed = currentDifficulty();
   const marker = game.markers[game.activeControl];
   if (!marker) return;
@@ -849,6 +885,7 @@ function startGoalkeeperPick() {
 
 function lockActiveControl() {
   if (game.mode !== 'playerAim') return;
+  if (game.waitingForWhistle) return;
 
   const key = game.activeControl;
   game.lockedShot[key] = game.controlValue[key];
@@ -864,12 +901,26 @@ function lockActiveControl() {
     game.phaseMessage = 'Select shot power';
     canvasHint.textContent = 'Click the Power bar or press Space.';
   } else {
+    game.activeControl = null;
     createPlayerShot();
   }
 }
 
 function createPlayerShot() {
-  audioManager.playWhistle();
+  if (game.waitingForWhistle || game.mode !== 'playerAim') return;
+  game.activeControl = null;
+  game.waitingForWhistle = true;
+  game.phaseMessage = 'Wait for the whistle!';
+  canvasHint.textContent = 'Whistle first, then the run-up begins.';
+
+  audioManager.playWhistleBefore(() => {
+    if (game.mode !== 'playerAim' || !game.waitingForWhistle) return;
+    game.waitingForWhistle = false;
+    startPlayerShotAfterWhistle();
+  });
+}
+
+function startPlayerShotAfterWhistle() {
   const shot = buildShotFromValues({
     shooter: 'player',
     direction: game.lockedShot.direction,
@@ -901,16 +952,29 @@ function chooseKeeperTargetAgainstPlayer(shot) {
 }
 
 function createOpponentShot(clickPoint) {
-  audioManager.playWhistle();
+  if (game.waitingForWhistle || game.mode !== 'goalkeeperPick') return;
   const shot = game.pendingOpponentShot || prepareOpponentShotBeforeKeeperClick();
-  game.pendingOpponentShot = null;
-  game.opponentHint.active = false;
-  game.opponentHint.alpha = 0;
-
-  shot.keeperTarget = {
+  const keeperTarget = {
     x: clamp(clickPoint.x, GOAL.x + 35, GOAL.x + GOAL.w - 35),
     y: clamp(clickPoint.y, GOAL.y + 38, GOAL.y + GOAL.h - 38),
   };
+
+  game.waitingForWhistle = true;
+  game.opponentHint.active = false;
+  game.opponentHint.alpha = 0;
+  game.phaseMessage = 'Wait for the whistle!';
+  canvasHint.textContent = 'Whistle first, then the opponent shoots.';
+
+  audioManager.playWhistleBefore(() => {
+    if (game.mode !== 'goalkeeperPick' || !game.waitingForWhistle) return;
+    game.waitingForWhistle = false;
+    startOpponentShotAfterWhistle(shot, keeperTarget);
+  });
+}
+
+function startOpponentShotAfterWhistle(shot, keeperTarget) {
+  game.pendingOpponentShot = null;
+  shot.keeperTarget = keeperTarget;
   shot.time = 0;
   shot.x = shot.start.x;
   shot.y = shot.start.y;
@@ -2500,11 +2564,13 @@ function handleCanvasClick(event) {
   const point = canvasPoint(event);
 
   if (game.mode === 'playerAim') {
+    if (game.waitingForWhistle) return;
     const bar = CONTROL_BARS[game.activeControl];
     if (point.x >= bar.x && point.x <= bar.x + bar.w && point.y >= bar.y - 18 && point.y <= bar.y + bar.h + 32) {
       lockActiveControl();
     }
   } else if (game.mode === 'goalkeeperPick') {
+    if (game.waitingForWhistle) return;
     if (point.x >= GOAL.x && point.x <= GOAL.x + GOAL.w && point.y >= GOAL.y && point.y <= GOAL.y + GOAL.h) {
       createOpponentShot(point);
     }
@@ -2519,7 +2585,7 @@ function keyDown(event) {
   if (!screens.game.classList.contains('active')) return;
   if (event.code === 'Space') {
     event.preventDefault();
-    if (game.mode === 'playerAim') lockActiveControl();
+    if (game.mode === 'playerAim' && !game.waitingForWhistle) lockActiveControl();
   }
 }
 
