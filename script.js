@@ -57,6 +57,91 @@ let animationId = 0;
 let logoImages = new Map();
 let crowdDots = [];
 
+const audioManager = {
+  enabled: true,
+  unlocked: false,
+  crowd: null,
+  whistle: null,
+  crowdAvailable: true,
+  whistleAvailable: true,
+
+  init() {
+    try {
+      this.crowd = new Audio('assets/audio/crowd-loop.mp3');
+      this.crowd.loop = true;
+      this.crowd.volume = 0.2;
+      this.crowd.preload = 'auto';
+      this.crowd.addEventListener('error', () => {
+        this.crowdAvailable = false;
+      }, { once: true });
+    } catch (_) {
+      this.crowdAvailable = false;
+      this.crowd = null;
+    }
+
+    try {
+      this.whistle = new Audio('assets/audio/whistle.mp3');
+      this.whistle.volume = 0.7;
+      this.whistle.preload = 'auto';
+      this.whistle.addEventListener('error', () => {
+        this.whistleAvailable = false;
+      }, { once: true });
+    } catch (_) {
+      this.whistleAvailable = false;
+      this.whistle = null;
+    }
+  },
+
+  unlock() {
+    this.unlocked = true;
+  },
+
+  setEnabled(value) {
+    this.enabled = value;
+    soundEnabled = value;
+    if (!value) {
+      this.stopCrowd();
+    } else if (screens.game.classList.contains('active')) {
+      this.playCrowd();
+    }
+  },
+
+  playCrowd() {
+    if (!this.enabled || !this.unlocked || !this.crowd || !this.crowdAvailable) return;
+    this.crowd.volume = 0.2;
+    const playPromise = this.crowd.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {
+        // Browsers can still reject playback; gameplay should continue silently.
+      });
+    }
+  },
+
+  stopCrowd() {
+    if (!this.crowd) return;
+    try {
+      this.crowd.pause();
+    } catch (_) {
+      // Missing or blocked audio should never break gameplay.
+    }
+  },
+
+  playWhistle() {
+    if (!this.enabled || !this.unlocked || !this.whistle || !this.whistleAvailable) return;
+    try {
+      this.whistle.currentTime = 0;
+      const playPromise = this.whistle.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          // Ignore blocked/missing audio without repeated console noise.
+        });
+      }
+    } catch (_) {
+      // Silent fallback.
+    }
+  },
+};
+
 const game = {
   mode: 'menu',
   phaseMessage: '',
@@ -277,6 +362,7 @@ function resetOpponentHint() {
 function startGame() {
   resetGame();
   showScreen('game');
+  audioManager.playCrowd();
   lastTime = performance.now();
   cancelAnimationFrame(animationId);
   animationId = requestAnimationFrame(loop);
@@ -783,6 +869,7 @@ function lockActiveControl() {
 }
 
 function createPlayerShot() {
+  audioManager.playWhistle();
   const shot = buildShotFromValues({
     shooter: 'player',
     direction: game.lockedShot.direction,
@@ -814,6 +901,7 @@ function chooseKeeperTargetAgainstPlayer(shot) {
 }
 
 function createOpponentShot(clickPoint) {
+  audioManager.playWhistle();
   const shot = game.pendingOpponentShot || prepareOpponentShotBeforeKeeperClick();
   game.pendingOpponentShot = null;
   game.opponentHint.active = false;
@@ -1012,6 +1100,7 @@ function randomGoalPoint() {
 
 function showFinal() {
   cancelAnimationFrame(animationId);
+  audioManager.stopCrowd();
   const title = document.getElementById('finalTitle');
   const summary = document.getElementById('finalSummary');
   const playerScore = document.getElementById('finalPlayerScore');
@@ -2497,10 +2586,12 @@ function generateCrowdDots() {
 
 function setupEvents() {
   document.getElementById('playBtn').addEventListener('click', () => {
+    audioManager.unlock();
     playTone('click');
     showScreen('team');
   });
   document.getElementById('howBtn').addEventListener('click', () => {
+    audioManager.unlock();
     playTone('click');
     showScreen('how');
   });
@@ -2508,22 +2599,26 @@ function setupEvents() {
   document.getElementById('backFromTeamBtn').addEventListener('click', () => showScreen('menu'));
   document.getElementById('continueBtn').addEventListener('click', () => {
     if (!selectedTeam) return;
+    audioManager.unlock();
     playTone('click');
     preparePreview();
   });
   document.getElementById('backFromPreviewBtn').addEventListener('click', () => showScreen('team'));
   document.getElementById('startMatchBtn').addEventListener('click', () => {
+    audioManager.unlock();
     playTone('click');
     startGame();
   });
   document.getElementById('playAgainBtn').addEventListener('click', () => {
+    audioManager.unlock();
     chooseOpponent();
     startGame();
   });
   document.getElementById('menuAgainBtn').addEventListener('click', () => showScreen('menu'));
   document.getElementById('soundBtn').addEventListener('click', () => {
-    soundEnabled = !soundEnabled;
-    document.getElementById('soundBtn').textContent = `SOUND: ${soundEnabled ? 'ON' : 'OFF'}`;
+    audioManager.unlock();
+    audioManager.setEnabled(!soundEnabled);
+    document.getElementById('soundBtn').textContent = `SOUND: ${audioManager.enabled ? 'ON' : 'OFF'}`;
     playTone('click');
   });
 
@@ -2533,6 +2628,7 @@ function setupEvents() {
 }
 
 function init() {
+  audioManager.init();
   generateCrowdDots();
   renderTeamGrid();
   loadLogoImages();
