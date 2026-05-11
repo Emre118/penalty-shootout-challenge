@@ -57,7 +57,7 @@ http://localhost:5500
 
 ## GitHub Pages
 
-GitHub Pages Link: [Add final link here]
+GitHub Pages Link: https://emre118.github.io/penalty-shootout-challenge/
 
 ## Screenshot Suggestions
 
