@@ -430,6 +430,36 @@ h2 {
   color: var(--accent);
 }
 
+.final-details {
+  display: grid;
+  gap: 10px;
+  margin: 20px auto 24px;
+  max-width: 620px;
+  text-align: left;
+}
+
+.final-details p {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px;
+  background: rgba(255,255,255,.08);
+}
+
+.final-details span {
+  color: rgba(255,255,255,.70);
+  font-weight: 800;
+}
+
+.final-details strong {
+  color: #ffffff;
+  font-weight: 950;
+  text-align: right;
+}
+
 .dash {
   font-size: 54px;
   font-weight: 950;
@@ -460,6 +490,17 @@ h2 {
   .versus-box,
   .final-score-box {
     grid-template-columns: 1fr;
+  }
+
+  .final-details p {
+    display: block;
+    text-align: center;
+  }
+
+  .final-details strong {
+    display: block;
+    margin-top: 4px;
+    text-align: center;
   }
 
   .team-grid {

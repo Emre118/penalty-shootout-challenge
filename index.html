@@ -25,18 +25,21 @@
         <h2>How to Play</h2>
         <div class="instructions-grid">
           <div>
-            <h3>When you shoot</h3>
-            <p>Use the three moving sliders at the bottom. Click the active slider or press <strong>Space</strong> to lock your choice.</p>
+            <h3>Set up your shot</h3>
+            <p>Select a team, then start the match preview. Your kit colors come from the team you choose, and the opponent is selected automatically.</p>
+            <p>Use the three moving control bars at the bottom. Click the active bar or press <strong>Space</strong> to lock your choice.</p>
             <p><strong>Direction:</strong> controls left and right placement.</p>
             <p><strong>Height:</strong> controls low or high shot. Too high can miss the goal.</p>
             <p><strong>Power:</strong> controls shot speed. Too slow is easy to save; too powerful can go wide.</p>
+            <p>After all three values are locked, wait for the whistle. The player then runs up and kicks the ball.</p>
           </div>
           <div>
-            <h3>When you defend</h3>
+            <h3>Defend the goal</h3>
             <p>Click inside the goal to choose where your goalkeeper will dive.</p>
-            <p>The opponent shoots automatically. If your dive position is close to the shot, you save it.</p>
-            <p><strong>Scoring:</strong> each goal gives <strong>100 points</strong>, each save gives <strong>50 points</strong>, and each match win gives a <strong>500 point</strong> bonus.</p>
-            <p>If one team has no mathematical chance to catch up, the shootout ends early. After five rounds, a draw goes to <strong>Sudden Death</strong>.</p>
+            <p>A glove hint may briefly show the opponent shot target before you dive. The hint gets shorter as the tournament becomes harder.</p>
+            <p>Use <strong>SOUND: ON/OFF</strong> in the top-right corner to control crowd ambience and whistles.</p>
+            <p><strong>Scoring:</strong> your goals give <strong>100 points</strong>, goalkeeper saves give <strong>50 points</strong>, and each match win gives a <strong>500 point</strong> bonus.</p>
+            <p>Each side takes five penalties. If the match is tied after five rounds, it continues in <strong>Sudden Death</strong>.</p>
           </div>
         </div>
         <button id="backFromHowBtn" class="secondary-btn">BACK</button>
@@ -98,6 +101,13 @@
           </div>
         </div>
         <p id="finalSummary" class="helper-text"></p>
+        <div class="final-details" aria-label="Final match details">
+          <p><span>Winner</span><strong id="finalWinner">-</strong></p>
+          <p><span>Teams</span><strong id="finalTeams">-</strong></p>
+          <p><span>Goals</span><strong id="finalGoals">0 - 0</strong></p>
+          <p><span>Points</span><strong id="finalPoints">0</strong></p>
+          <p><span>Mode</span><strong id="finalMode">Regular penalties</strong></p>
+        </div>
         <button id="playAgainBtn" class="primary-btn">PLAY AGAIN</button>
         <button id="menuAgainBtn" class="secondary-btn">MAIN MENU</button>
       </div>

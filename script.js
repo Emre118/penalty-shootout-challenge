@@ -418,6 +418,14 @@ function currentMatchLabel() {
   return `Match ${game.tournamentWins + 1}`;
 }
 
+function difficultyLabel() {
+  const level = tournamentDifficultyLevel();
+  if (level <= 0) return 'Standard';
+  if (level === 1) return 'Rising';
+  if (level === 2) return 'Hard';
+  return 'Expert';
+}
+
 
 function startGame(options = {}) {
   resetGame(options);
@@ -1259,8 +1267,14 @@ function showFinal() {
   const playerScore = document.getElementById('finalPlayerScore');
   const opponentScore = document.getElementById('finalOpponentScore');
   const actionButton = document.getElementById('playAgainBtn');
+  const finalWinner = document.getElementById('finalWinner');
+  const finalTeams = document.getElementById('finalTeams');
+  const finalGoals = document.getElementById('finalGoals');
+  const finalPoints = document.getElementById('finalPoints');
+  const finalMode = document.getElementById('finalMode');
 
   const playerWonMatch = game.playerGoals > game.opponentGoals;
+  const opponentWonMatch = game.playerGoals < game.opponentGoals;
   game.lastMatchWon = playerWonMatch;
 
   if (playerWonMatch && !game.matchAwarded) {
@@ -1277,12 +1291,17 @@ function showFinal() {
   document.getElementById('finalOpponentName').textContent = 'Match Score';
   playerScore.textContent = game.playerPoints;
   opponentScore.textContent = `${game.playerGoals} - ${game.opponentGoals}`;
+  finalWinner.textContent = playerWonMatch ? selectedTeam.name : opponentWonMatch ? opponentTeam.name : 'Draw';
+  finalTeams.textContent = `${selectedTeam.name} vs ${opponentTeam.name}`;
+  finalGoals.textContent = `${selectedTeam.name} ${game.playerGoals} - ${game.opponentGoals} ${opponentTeam.name}`;
+  finalPoints.textContent = `${game.playerPoints} total points`;
+  finalMode.textContent = game.suddenDeath ? 'Sudden Death reached' : 'Regular penalties';
 
   if (playerWonMatch) {
     title.textContent = 'Match Won!';
     summary.textContent = `${selectedTeam.name} beat ${opponentTeam.name} ${game.playerGoals}-${game.opponentGoals}. +500 match win bonus earned. Total wins: ${game.tournamentWins}. Total points: ${game.playerPoints}. Next match will be harder.`;
     actionButton.textContent = 'NEXT MATCH';
-  } else if (game.playerGoals < game.opponentGoals) {
+  } else if (opponentWonMatch) {
     title.textContent = 'Tournament Over';
     summary.textContent = `${opponentTeam.name} won ${game.opponentGoals}-${game.playerGoals}. Total wins: ${game.tournamentWins}. Total points: ${game.playerPoints}.`;
     actionButton.textContent = 'PLAY AGAIN';
@@ -1705,7 +1724,8 @@ function drawScoreboard() {
   ctx.textAlign = 'left';
   ctx.fillText(`POINTS: ${game.playerPoints}`, 14, 27);
   ctx.textAlign = 'right';
-  ctx.fillText(`${currentMatchLabel()}  |  WINS: ${game.tournamentWins}  |  ${game.suddenDeath ? 'SUDDEN DEATH' : `${Math.min(game.round, 5)} / 5`}`, W - 14, 27);
+  const progressLabel = game.suddenDeath ? 'SUDDEN DEATH' : `R${Math.min(game.round, 5)}/5`;
+  ctx.fillText(`${currentMatchLabel()}  |  DIFF: ${difficultyLabel()}  |  W${game.tournamentWins}  |  ${progressLabel}`, W - 14, 27);
 
   drawCanvasCrest(selectedTeam, 275, 21, 32);
   drawCanvasCrest(opponentTeam, 845, 21, 32);
